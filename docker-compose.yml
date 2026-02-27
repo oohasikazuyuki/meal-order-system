@@ -1,0 +1,86 @@
+services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - ./backend:/var/www/html
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - meal_network
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    volumes:
+      - ./backend:/var/www/html
+    environment:
+      APP_ENV: development
+      DB_HOST: db
+      DB_NAME: ${MYSQL_DATABASE}
+      DB_USER: ${MYSQL_USER}
+      DB_PASS: ${MYSQL_PASSWORD}
+      KAMAHO_BASE_URL: ${KAMAHO_BASE_URL}
+      KAMAHO_LOGIN_ACCOUNT: ${KAMAHO_LOGIN_ACCOUNT}
+      KAMAHO_LOGIN_PASSWORD: ${KAMAHO_LOGIN_PASSWORD}
+    # 起動時に composer install → php-fpm を実行
+    command: >
+      sh -c "
+        cd /var/www/html &&
+        composer install --no-interaction --no-dev --optimize-autoloader &&
+        mkdir -p tmp/cache/models tmp/cache/persistent tmp/sessions logs &&
+        chmod -R 777 tmp logs &&
+        php-fpm
+      "
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - meal_network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost/api
+      WATCHPACK_POLLING: "true"
+    command: npm run dev
+    networks:
+      - meal_network
+
+  db:
+    image: mysql:8.0
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - meal_network
+
+networks:
+  meal_network:
+    driver: bridge
+
+volumes:
+  db_data:
+  frontend_node_modules:

@@ -1,0 +1,15 @@
+# 認証情報・環境依存設定
+.env
+
+# CakePHP
+backend/vendor/
+backend/tmp/
+backend/logs/
+
+# Docker ボリューム
+*.log
+
+# OS
+.DS_Store
+frontend/.next
+.idea

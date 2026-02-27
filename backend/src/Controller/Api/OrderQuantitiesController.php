@@ -1,0 +1,116 @@
+<?php
+namespace App\Controller\Api;
+
+use App\Controller\AppController;
+
+/**
+ * 発注数量 CRUD API
+ *
+ * GET    /api/order-quantities.json?date=YYYY-MM-DD  → 指定日の発注数量一覧
+ * POST   /api/order-quantities.json                  → 一括保存（upsert）
+ * DELETE /api/order-quantities/:id.json              → 削除
+ */
+class OrderQuantitiesController extends AppController
+{
+    /**
+     * GET /api/order-quantities.json?date=YYYY-MM-DD
+     * 指定日の全食事種別の発注数量を返す
+     */
+    public function index(): void
+    {
+        $date = $this->request->getQuery('date', date('Y-m-d'));
+        $table = $this->fetchTable('DailyOrderQuantities');
+
+        $rows = $table->find('all')
+            ->where(['order_date' => $date])
+            ->orderBy(['meal_type' => 'ASC'])
+            ->toArray();
+
+        $this->set(['ok' => true, 'date' => $date, 'quantities' => $rows]);
+        $this->viewBuilder()->setOption('serialize', ['ok', 'date', 'quantities']);
+    }
+
+    /**
+     * POST /api/order-quantities.json
+     * 指定日の発注数量を一括保存（meal_type ごとに upsert）
+     *
+     * リクエストボディ:
+     * {
+     *   "order_date": "2026-03-01",
+     *   "items": [
+     *     {"meal_type": 1, "kamaho_count": 5, "order_quantity": 6, "notes": ""},
+     *     {"meal_type": 2, "kamaho_count": 10, "order_quantity": 10, "notes": ""},
+     *     ...
+     *   ]
+     * }
+     */
+    public function add(): void
+    {
+        $data      = $this->request->getData();
+        $orderDate = $data['order_date'] ?? null;
+        $items     = $data['items'] ?? [];
+
+        if (!$orderDate || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $orderDate)) {
+            $this->response = $this->response->withStatus(400);
+            $this->set(['ok' => false, 'message' => 'order_date が不正です']);
+            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+            return;
+        }
+
+        if (empty($items) || !is_array($items)) {
+            $this->response = $this->response->withStatus(400);
+            $this->set(['ok' => false, 'message' => 'items が空です']);
+            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+            return;
+        }
+
+        $table  = $this->fetchTable('DailyOrderQuantities');
+        $saved  = [];
+        $errors = [];
+
+        foreach ($items as $item) {
+            $mealType = (int)($item['meal_type'] ?? 0);
+            if (!in_array($mealType, [1, 2, 3, 4], true)) {
+                continue;
+            }
+
+            // upsert: 既存レコードを取得、なければ新規作成
+            $existing = $table->find()
+                ->where(['order_date' => $orderDate, 'meal_type' => $mealType])
+                ->first();
+
+            $entity = $existing
+                ? $table->patchEntity($existing, $item)
+                : $table->newEntity(array_merge($item, ['order_date' => $orderDate]));
+
+            if ($table->save($entity)) {
+                $saved[] = $entity;
+            } else {
+                $errors[$mealType] = $entity->getErrors();
+            }
+        }
+
+        if (!empty($errors)) {
+            $this->response = $this->response->withStatus(400);
+            $this->set(['ok' => false, 'errors' => $errors]);
+            $this->viewBuilder()->setOption('serialize', ['ok', 'errors']);
+            return;
+        }
+
+        $this->set(['ok' => true, 'saved' => $saved]);
+        $this->viewBuilder()->setOption('serialize', ['ok', 'saved']);
+    }
+
+    /**
+     * DELETE /api/order-quantities/:id.json
+     */
+    public function delete(int $id): void
+    {
+        $table  = $this->fetchTable('DailyOrderQuantities');
+        $entity = $table->get($id);
+        $table->delete($entity);
+
+        $this->set(['ok' => true]);
+        $this->viewBuilder()->setOption('serialize', ['ok']);
+    }
+}

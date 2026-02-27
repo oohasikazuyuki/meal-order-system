@@ -1,0 +1,51 @@
+====================================================================
+config/routes.php への追加内容
+====================================================================
+
+Router::scope() 内の既存 $builder->... の後に以下を追加してください:
+
+    $builder->prefix('Api', function (RouteBuilder $routes) {
+        $routes->setExtensions(['json']);
+        $routes->resources('Orders', [
+            'map' => [
+                'summary' => ['action' => 'summary', 'method' => 'GET']
+            ]
+        ]);
+        $routes->resources('Menus');
+        $routes->resources('OrderQuantities', [
+            'map' => [
+                'add' => ['action' => 'add', 'method' => 'POST']
+            ]
+        ]);
+        // kamaho 食数取得（GET /api/kamaho-meal-counts.json?date=YYYY-MM-DD）
+        $routes->connect(
+            '/kamaho-meal-counts',
+            ['controller' => 'KamahoMealCounts', 'action' => 'index'],
+            ['_name' => 'api:kamaho-meal-counts']
+        );
+    });
+
+====================================================================
+src/Application.php への追加内容
+====================================================================
+
+1. use 文に追加:
+   use Cake\Http\Middleware\CorsMiddleware;
+
+2. middleware() メソッド内に追加:
+    $middlewareQueue->add(new CorsMiddleware([
+        'origin' => ['http://localhost:3000'],
+        'methods' => ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+        'headers.allow' => ['Content-Type', 'Authorization'],
+        'headers.expose' => [],
+        'credentials' => false,
+        'maxAge' => 0,
+    ]));
+
+====================================================================
+環境変数（docker-compose.yml の backend サービス）
+====================================================================
+
+      KAMAHO_BASE_URL: https://kamaho-shokusu.jp
+      KAMAHO_LOGIN_ACCOUNT: "your-account"   # 実際のアカウントに変更
+      KAMAHO_LOGIN_PASSWORD: "your-password" # 実際のパスワードに変更
