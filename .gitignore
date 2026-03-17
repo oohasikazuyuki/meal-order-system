@@ -11,6 +11,10 @@ backend/logs/
 
 # OS
 .DS_Store
+# Excel 一時ロックファイル
+~$*.xls
+~$*.xlsx
+~$*.xlsm
 frontend/.next
 .idea
 /frontend/node_modules/
