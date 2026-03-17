@@ -52,6 +52,35 @@ class MenusController extends AppController
         $this->viewBuilder()->setOption('serialize', ['success']);
     }
 
+    /** POST /api/menus/schedule-routine.json */
+    public function scheduleRoutine(): void
+    {
+        $data = $this->request->getData();
+        $sourceStart = (string)($data['source_start'] ?? '');
+        $sourceEnd   = (string)($data['source_end']   ?? '');
+        $targetStart = (string)($data['target_start'] ?? '');
+        $targetEnd   = (string)($data['target_end']   ?? '');
+        $cycleMonths = (int)($data['cycle_months'] ?? 2);
+        $includeBirthdayMenu = (bool)($data['include_birthday_menu'] ?? true);
+        $overwrite   = (bool)($data['overwrite'] ?? false);
+        $blockId     = isset($data['block_id']) && $data['block_id'] !== '' ? (int)$data['block_id'] : null;
+
+        $result = $this->menuService->scheduleRoutine(
+            $sourceStart,
+            $sourceEnd,
+            $targetStart,
+            $targetEnd,
+            $cycleMonths,
+            $includeBirthdayMenu,
+            $overwrite,
+            $blockId
+        );
+
+        $this->response = $this->response->withStatus($result['status'] ?? 200);
+        $this->set($result);
+        $this->viewBuilder()->setOption('serialize', array_keys($result));
+    }
+
     /** POST /api/menus/copy-routine.json */
     public function copyRoutine(): void
     {

@@ -20,6 +20,7 @@ return static function (RouteBuilder $routes): void {
         ]);
 
         $routes->connect('/menus/copy-routine', ['controller' => 'Menus', 'action' => 'copyRoutine'], ['_method' => 'POST']);
+        $routes->connect('/menus/schedule-routine', ['controller' => 'Menus', 'action' => 'scheduleRoutine'], ['_method' => 'POST']);
         $routes->resources('Menus', ['only' => ['index', 'create', 'delete']]);
 
         $routes->resources('OrderQuantities', ['only' => ['index', 'create', 'delete']]);
