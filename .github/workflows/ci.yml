@@ -54,6 +54,50 @@ jobs:
       - name: Install dependencies
         run: composer install --no-interaction --no-dev --optimize-autoloader
 
+  migrate:
+    name: DB Migration
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
+          MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
+          MYSQL_USER: ${{ secrets.MYSQL_USER }}
+          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          tools: composer
+          extensions: pdo_mysql
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-dev --optimize-autoloader
+
+      - name: Prepare cache directories
+        run: mkdir -p tmp/cache/models tmp/cache/persistent tmp/sessions logs
+
+      - name: Run migrations
+        run: vendor/bin/cake migrations migrate
+        env:
+          DB_HOST: 127.0.0.1
+          DB_NAME: ${{ secrets.MYSQL_DATABASE }}
+          DB_USER: ${{ secrets.MYSQL_USER }}
+          DB_PASS: ${{ secrets.MYSQL_PASSWORD }}
+
   docker-config:
     name: Docker Compose Config Validation
     runs-on: ubuntu-latest
