@@ -15,6 +15,14 @@ use App\Service\KamahoApiService;
  */
 class BlockOrderQuantitiesController extends AppController
 {
+    public function initialize(): void
+    {
+        parent::initialize();
+        $this->Blocks = $this->fetchTable('Blocks');
+        $this->BlockOrderQuantities = $this->fetchTable('BlockOrderQuantities');
+        $this->Menus = $this->fetchTable('Menus');
+    }
+
     /**
      * GET /api/block-order-quantities.json?date=YYYY-MM-DD
      */
@@ -23,8 +31,7 @@ class BlockOrderQuantitiesController extends AppController
         $date = $this->request->getQuery('date', date('Y-m-d'));
 
         // 1. ブロック+部屋+グラム設定
-        $blocksTable = $this->fetchTable('Blocks');
-        $blocks = $blocksTable->find('all')
+        $blocks = $this->Blocks->find('all')
             ->contain(['Room1', 'Room2'])
             ->orderBy(['Blocks.sort_order' => 'ASC', 'Blocks.id' => 'ASC'])
             ->toArray();
@@ -39,8 +46,7 @@ class BlockOrderQuantitiesController extends AppController
         }
 
         // 3. 保存済みのblock_order_quantities
-        $boqTable    = $this->fetchTable('BlockOrderQuantities');
-        $savedRows   = $boqTable->find()
+        $savedRows   = $this->BlockOrderQuantities->find()
             ->where(['order_date' => $date])
             ->toArray();
         $savedByBlockMeal = [];
@@ -49,8 +55,7 @@ class BlockOrderQuantitiesController extends AppController
         }
 
         // 4. この日のメニュー一覧（名前・グラム量）
-        $menusTable = $this->fetchTable('Menus');
-        $menuRows   = $menusTable->find()
+        $menuRows   = $this->Menus->find()
             ->where(['menu_date' => $date])
             ->toArray();
         $menuByType = []; // meal_type => ['name' => ..., 'grams_per_person' => ...]
@@ -148,7 +153,6 @@ class BlockOrderQuantitiesController extends AppController
             return;
         }
 
-        $table  = $this->fetchTable('BlockOrderQuantities');
         $saved  = [];
         $errors = [];
 
@@ -159,16 +163,16 @@ class BlockOrderQuantitiesController extends AppController
                 continue;
             }
 
-            $existing = $table->find()
+            $existing = $this->BlockOrderQuantities->find()
                 ->where(['order_date' => $orderDate, 'block_id' => $blockId, 'meal_type' => $mealType])
                 ->first();
 
             $entityData = array_merge($item, ['order_date' => $orderDate]);
             $entity = $existing
-                ? $table->patchEntity($existing, $entityData)
-                : $table->newEntity($entityData);
+                ? $this->BlockOrderQuantities->patchEntity($existing, $entityData)
+                : $this->BlockOrderQuantities->newEntity($entityData);
 
-            if ($table->save($entity)) {
+            if ($this->BlockOrderQuantities->save($entity)) {
                 $saved[] = $entity;
             } else {
                 $errors[] = $entity->getErrors();

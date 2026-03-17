@@ -10,5 +10,11 @@ class UsersTable extends Table
         parent::initialize($config);
         $this->setTable('users');
         $this->addBehavior('Timestamp');
+        
+        // Blocks テーブルとの関連付け
+        $this->belongsTo('Blocks', [
+            'foreignKey' => 'block_id',
+            'joinType' => 'LEFT',
+        ]);
     }
 }

@@ -2,6 +2,7 @@
 namespace App\Controller\Api;
 
 use App\Controller\AppController;
+use App\Service\UserService;
 
 /**
  * ユーザー管理 API
@@ -13,81 +14,60 @@ use App\Controller\AppController;
  */
 class UsersController extends AppController
 {
+    private UserService $userService;
+
+    public function initialize(): void
+    {
+        parent::initialize();
+        $this->userService = new UserService();
+    }
+
     public function index(): void
     {
-        $users = $this->fetchTable('Users')
-            ->find()
-            ->select(['id', 'name', 'login_id', 'role', 'block_id', 'created'])
-            ->orderBy(['id' => 'ASC'])
-            ->toArray();
-
+        $users = $this->userService->getUserList();
         $this->set(['ok' => true, 'users' => $users]);
         $this->viewBuilder()->setOption('serialize', ['ok', 'users']);
     }
 
     public function add(): void
     {
-        $data = $this->request->getData();
-        $table = $this->fetchTable('Users');
+        $result = $this->userService->createUser($this->request->getData());
 
-        if (empty($data['password'])) {
-            $this->response = $this->response->withStatus(400);
-            $this->set(['ok' => false, 'message' => 'パスワードは必須です']);
-            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+        if (!$result['success']) {
+            $this->response = $this->response->withStatus($result['status']);
+            if (isset($result['message'])) {
+                $this->set(['ok' => false, 'message' => $result['message']]);
+                $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+            } else {
+                $this->set(['ok' => false, 'errors' => $result['errors']]);
+                $this->viewBuilder()->setOption('serialize', ['ok', 'errors']);
+            }
             return;
         }
 
-        $data['password'] = password_hash($data['password'], PASSWORD_BCRYPT);
-
-        // block_id: 空文字またはnullの場合はnullに統一
-        if (array_key_exists('block_id', $data)) {
-            $data['block_id'] = ($data['block_id'] !== '' && $data['block_id'] !== null) ? (int)$data['block_id'] : null;
-        }
-        $user = $table->newEntity($data, ['accessibleFields' => ['name' => true, 'login_id' => true, 'password' => true, 'role' => true, 'block_id' => true]]);
-
-        if ($table->save($user)) {
-            $this->response = $this->response->withStatus(201);
-            $this->set(['ok' => true, 'user' => ['id' => $user->id, 'name' => $user->name, 'login_id' => $user->login_id, 'role' => $user->role, 'block_id' => $user->block_id]]);
-        } else {
-            $this->response = $this->response->withStatus(400);
-            $this->set(['ok' => false, 'errors' => $user->getErrors()]);
-        }
-        $this->viewBuilder()->setOption('serialize', ['ok', 'user', 'errors', 'message']);
+        $this->response = $this->response->withStatus($result['status']);
+        $this->set(['ok' => true, 'user' => $result['user']]);
+        $this->viewBuilder()->setOption('serialize', ['ok', 'user']);
     }
 
     public function edit(int $id): void
     {
-        $table = $this->fetchTable('Users');
-        $user  = $table->get($id);
-        $data  = $this->request->getData();
+        $result = $this->userService->updateUser($id, $this->request->getData());
 
-        // パスワードが送られてきた場合のみハッシュ化
-        if (!empty($data['password'])) {
-            $data['password'] = password_hash($data['password'], PASSWORD_BCRYPT);
-        } else {
-            unset($data['password']);
-        }
-
-        if (array_key_exists('block_id', $data)) {
-            $data['block_id'] = ($data['block_id'] !== '' && $data['block_id'] !== null) ? (int)$data['block_id'] : null;
-        }
-        $table->patchEntity($user, $data, ['accessibleFields' => ['name' => true, 'login_id' => true, 'password' => true, 'role' => true, 'block_id' => true]]);
-
-        if ($table->save($user)) {
-            $this->set(['ok' => true, 'user' => ['id' => $user->id, 'name' => $user->name, 'login_id' => $user->login_id, 'role' => $user->role, 'block_id' => $user->block_id]]);
-        } else {
+        if (!$result['success']) {
             $this->response = $this->response->withStatus(400);
-            $this->set(['ok' => false, 'errors' => $user->getErrors()]);
+            $this->set(['ok' => false, 'errors' => $result['errors']]);
+            $this->viewBuilder()->setOption('serialize', ['ok', 'errors']);
+            return;
         }
-        $this->viewBuilder()->setOption('serialize', ['ok', 'user', 'errors']);
+
+        $this->set(['ok' => true, 'user' => $result['user']]);
+        $this->viewBuilder()->setOption('serialize', ['ok', 'user']);
     }
 
     public function delete(int $id): void
     {
-        $table = $this->fetchTable('Users');
-        $user  = $table->get($id);
-        $table->delete($user);
-
+        $this->userService->deleteUser($id);
         $this->set(['ok' => true]);
         $this->viewBuilder()->setOption('serialize', ['ok']);
     }

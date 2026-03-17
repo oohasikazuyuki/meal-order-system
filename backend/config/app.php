@@ -53,6 +53,7 @@ return [
             'cacheMetadata' => true,
             'log' => false,
             'quoteIdentifiers' => false,
+            'init' => ['SET NAMES utf8mb4 COLLATE utf8mb4_general_ci', 'SET CHARACTER SET utf8mb4'],
         ],
         'test' => [
             'className' => 'Cake\Database\Connection',

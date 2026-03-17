@@ -3,15 +3,58 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   fetchMenuMasters, createMenuMaster, updateMenuMaster, deleteMenuMaster,
-  fetchBlocks,
-  type MenuMaster, type MenuMasterInput, type MenuIngredientInput, type Block,
+  fetchBlocks, fetchSuppliers, draftMenuMasterByAi,
+  type MenuMaster, type MenuMasterInput, type MenuIngredientInput, type Block, type Supplier, type AiMenuMasterDraftResponse,
 } from '../_lib/api/client'
 
-const UNIT_OPTIONS = ['g', 'kg', 'ml', 'L', '個', '枚', '本', '袋', '缶', '合', '大さじ', '小さじ', '適量']
+const UNIT_OPTIONS = ['g', 'kg', 'ml', 'L', '個', '枚', '本', '袋', '缶', '束', '合', '大さじ', '小さじ', '切れ', '適量']
+const FRACTION_OPTIONS: Array<{ label: string; value: number }> = [
+  { label: '1/8', value: 0.125 },
+  { label: '1/6', value: 1 / 6 },
+  { label: '1/5', value: 0.2 },
+  { label: '1/4', value: 0.25 },
+  { label: '1/3', value: 1 / 3 },
+  { label: '1/2', value: 0.5 },
+  { label: '2/3', value: 2 / 3 },
+  { label: '3/4', value: 0.75 },
+  { label: '1', value: 1 },
+  { label: '1 1/2', value: 1.5 },
+  { label: '2', value: 2 },
+]
+const FRACTION_UNITS = new Set(['個', '枚', '本', '袋', '缶', '束', '切れ'])
+const AI_PUBLIC_ENABLED = process.env.NEXT_PUBLIC_AI_PUBLIC_ENABLED === 'true'
+
+const parseAmountInput = (value: string): number => {
+  const v = value.trim()
+  if (!v) return 0
+  const mixed = v.match(/^([0-9]+)\s+([0-9]+)\s*\/\s*([0-9]+(?:\.[0-9]+)?)$/)
+  if (mixed) {
+    const whole = Number(mixed[1])
+    const num = Number(mixed[2])
+    const den = Number(mixed[3])
+    return den > 0 ? whole + num / den : 0
+  }
+  const m = v.match(/^([0-9]+(?:\.[0-9]+)?)\s*\/\s*([0-9]+(?:\.[0-9]+)?)$/)
+  if (m) {
+    const num = Number(m[1])
+    const den = Number(m[2])
+    return den > 0 ? num / den : 0
+  }
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
+}
+
+const amountToFractionLabel = (amount: number): string | null => {
+  const hit = FRACTION_OPTIONS.find(o => Math.abs(o.value - amount) < 0.001)
+  return hit ? hit.label : null
+}
+
+const formatAmountLabel = (amount: number): string => amountToFractionLabel(amount) ?? String(amount)
 
 export default function MenuMasterPage() {
   const [masters, setMasters] = useState<MenuMaster[]>([])
   const [blocks, setBlocks] = useState<Block[]>([])
+  const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [loading, setLoading] = useState(false)
   const [showForm, setShowForm] = useState(false)
   const [editTarget, setEditTarget] = useState<MenuMaster | null>(null)
@@ -23,12 +66,14 @@ export default function MenuMasterPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [mastersRes, blocksRes] = await Promise.all([
+      const [mastersRes, blocksRes, suppliersRes] = await Promise.all([
         fetchMenuMasters(),
         fetchBlocks(),
+        fetchSuppliers(),
       ])
       setMasters(mastersRes.data.menu_masters)
       setBlocks(blocksRes.data.blocks)
+      setSuppliers(suppliersRes.data.suppliers)
     } catch {
       setError('読み込み失敗')
     } finally {
@@ -40,11 +85,13 @@ export default function MenuMasterPage() {
 
   const handleDelete = async (m: MenuMaster) => {
     if (!confirm(`「${m.name}」を削除しますか？`)) return
+    const prevMasters = masters
+    setMasters(prev => prev.filter(x => x.id !== m.id))
     try {
       await deleteMenuMaster(m.id)
       setSuccessMsg(`「${m.name}」を削除しました`)
-      load()
     } catch {
+      setMasters(prevMasters)
       setError('削除に失敗しました')
     }
   }
@@ -127,6 +174,7 @@ export default function MenuMasterPage() {
         <MenuMasterForm
           initial={editTarget}
           blocks={blocks}
+          suppliers={suppliers}
           onSuccess={handleSuccess}
           onCancel={() => { setShowForm(false); setEditTarget(null) }}
         />
@@ -242,10 +290,16 @@ function MenuMasterCard({ master, blockName, onEdit, onDelete }: {
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
             {ings.map(ing => (
               <span key={ing.id} style={{
-                background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6,
+                background: ing.persons_per_unit ? '#fffbeb' : '#fff',
+                border: `1px solid ${ing.persons_per_unit ? '#fcd34d' : '#e5e7eb'}`,
+                borderRadius: 6,
                 padding: '0.25rem 0.65rem', fontSize: '0.82rem', color: '#374151',
               }}>
-                {ing.name} {ing.amount > 0 ? `${ing.amount}${ing.unit}` : ing.unit}
+                {ing.name}{' '}
+                {ing.persons_per_unit
+                  ? <span style={{ color: '#d97706', fontWeight: 600 }}>{ing.persons_per_unit}人で1{ing.unit}</span>
+                  : ing.amount > 0 ? `${formatAmountLabel(ing.amount)}${ing.unit}` : ing.unit
+                }
               </span>
             ))}
           </div>
@@ -258,9 +312,10 @@ function MenuMasterCard({ master, blockName, onEdit, onDelete }: {
 // ========================
 // 追加・編集フォーム
 // ========================
-function MenuMasterForm({ initial, blocks, onSuccess, onCancel }: {
+function MenuMasterForm({ initial, blocks, suppliers, onSuccess, onCancel }: {
   initial: MenuMaster | null
   blocks: Block[]
+  suppliers: Supplier[]
   onSuccess: (msg: string) => void
   onCancel: () => void
 }) {
@@ -270,15 +325,72 @@ function MenuMasterForm({ initial, blocks, onSuccess, onCancel }: {
   const [grams, setGrams] = useState(String(initial?.grams_per_person ?? ''))
   const [memo, setMemo] = useState(initial?.memo ?? '')
   const [ingredients, setIngredients] = useState<MenuIngredientInput[]>(
-    initial?.menu_ingredients?.map(i => ({ name: i.name, amount: i.amount, unit: i.unit })) ?? [{ name: '', amount: 0, unit: 'g' }]
+    initial?.menu_ingredients?.map(i => ({ name: i.name, amount: i.amount, unit: i.unit, persons_per_unit: i.persons_per_unit ?? null, supplier_id: i.supplier_id ?? null })) ?? [{ name: '', amount: 0, unit: 'g', persons_per_unit: null, supplier_id: null }]
   )
   const [saving, setSaving] = useState(false)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiElapsedSec, setAiElapsedSec] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [aiInfo, setAiInfo] = useState<string | null>(null)
 
-  const addIngRow = () => setIngredients(prev => [...prev, { name: '', amount: 0, unit: 'g' }])
+  const addIngRow = () => setIngredients(prev => [...prev, { name: '', amount: 0, unit: 'g', persons_per_unit: null, supplier_id: null }])
   const removeIngRow = (idx: number) => setIngredients(prev => prev.filter((_, i) => i !== idx))
   const updateIng = (idx: number, patch: Partial<MenuIngredientInput>) =>
     setIngredients(prev => { const a = [...prev]; a[idx] = { ...a[idx], ...patch }; return a })
+
+  useEffect(() => {
+    if (!aiLoading) return
+    setAiElapsedSec(0)
+    const started = Date.now()
+    const timer = setInterval(() => {
+      setAiElapsedSec(Math.floor((Date.now() - started) / 1000))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [aiLoading])
+
+  const applyAiDraft = (draft: AiMenuMasterDraftResponse['draft']) => {
+    setGrams(String(draft.grams_per_person ?? 0))
+    setMemo(draft.memo ?? '')
+    if (Array.isArray(draft.ingredients) && draft.ingredients.length > 0) {
+      setIngredients(
+        draft.ingredients.map(i => ({
+          name: i.name ?? '',
+          amount: Number(i.amount ?? 0),
+          unit: i.unit || 'g',
+          persons_per_unit: i.persons_per_unit ?? null,
+          supplier_id: i.supplier_id ?? null,
+        }))
+      )
+    }
+  }
+
+  const handleAiDraft = async () => {
+    setAiLoading(true)
+    setError(null)
+    setAiInfo(null)
+    try {
+      const res = await draftMenuMasterByAi({
+        name: name.trim() || undefined,
+        block_id: blockId,
+      })
+      const body: AiMenuMasterDraftResponse = res.data
+      if (!body.ok || !body.draft) {
+        setError(body.message || 'AI下書きの取得に失敗しました')
+        return
+      }
+      if (body.name && body.name.trim()) {
+        setName(body.name.trim())
+      }
+      applyAiDraft(body.draft)
+      if (body.name_generated) {
+        setAiInfo('AIが料理名を生成しました。必要なら編集してください。')
+      }
+    } catch {
+      setError('AI下書きの取得に失敗しました（Ollama起動状態を確認してください）')
+    } finally {
+      setAiLoading(false)
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -312,28 +424,56 @@ function MenuMasterForm({ initial, blocks, onSuccess, onCancel }: {
       background: '#fff', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
       padding: '1.5rem', marginBottom: '1.5rem', border: '2px solid #e5e7eb',
     }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-        <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#1a202c' }}>
-          {isEdit ? '✏ メニューを編集' : '＋ メニューを追加'}
-        </h3>
-        <button onClick={onCancel} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: '1.2rem' }}>✕</button>
-      </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#1a202c' }}>
+            {isEdit ? '✏ メニューを編集' : '＋ メニューを追加'}
+          </h3>
+          <button onClick={onCancel} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: '1.2rem' }}>✕</button>
+        </div>
 
       {error && <div style={{ ...alertStyle('error'), marginBottom: '1rem' }}>⚠ {error}</div>}
+      {AI_PUBLIC_ENABLED && aiInfo && <div style={{ ...alertStyle('success'), marginBottom: '1rem' }}>✓ {aiInfo}</div>}
+      {AI_PUBLIC_ENABLED && aiLoading && (
+        <div style={{ ...alertStyle('success'), marginBottom: '1rem', color: '#0f766e', borderColor: '#99f6e4', background: '#f0fdfa' }}>
+          AIが下書きを生成中です... {aiElapsedSec}秒経過
+        </div>
+      )}
 
       <form onSubmit={handleSubmit}>
         {/* 基本情報 */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 120px 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
           <div>
             <label style={labelStyle}>メニュー名 <span style={{ color: '#dc2626' }}>*</span></label>
-            <input
-              type="text"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder="例：おかゆ定食"
-              style={formInput}
-              autoFocus
-            />
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <input
+                type="text"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                placeholder="例：おかゆ定食"
+                style={formInput}
+                autoFocus
+              />
+              {AI_PUBLIC_ENABLED && (
+                <button
+                  type="button"
+                  onClick={handleAiDraft}
+                  disabled={aiLoading || saving}
+                  style={{
+                    padding: '0.5rem 0.7rem',
+                    background: aiLoading ? '#94a3b8' : '#0f766e',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 8,
+                    cursor: aiLoading || saving ? 'not-allowed' : 'pointer',
+                    fontSize: '0.82rem',
+                    fontWeight: 700,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {aiLoading ? '生成中...' : 'AI下書き'}
+                </button>
+              )}
+            </div>
           </div>
           <div>
             <label style={labelStyle}>対象ブロック</label>
@@ -380,6 +520,15 @@ function MenuMasterForm({ initial, blocks, onSuccess, onCancel }: {
             <span style={{ fontSize: '0.78rem', color: '#9ca3af' }}>（省略可）</span>
           </div>
           <div style={{ background: '#f8fafc', borderRadius: 8, padding: '0.75rem', border: '1px solid #e5e7eb' }}>
+            {/* ヘッダー行 */}
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.3rem', alignItems: 'center', fontSize: '0.72rem', color: '#9ca3af', fontWeight: 600 }}>
+              <span style={{ flex: 1 }}>材料名</span>
+              <span style={{ width: 70, textAlign: 'right' }}>量</span>
+              <span style={{ width: 70 }}>単位</span>
+              <span style={{ width: 110, textAlign: 'center' }}>何人で1単位</span>
+              <span style={{ minWidth: 80 }}>仕入先</span>
+              <span style={{ width: 28 }}></span>
+            </div>
             {ingredients.map((ing, idx) => (
               <div key={idx} style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.4rem', alignItems: 'center' }}>
                 <input
@@ -389,21 +538,60 @@ function MenuMasterForm({ initial, blocks, onSuccess, onCancel }: {
                   placeholder="材料名"
                   style={{ flex: 1, padding: '0.35rem 0.6rem', fontSize: '0.85rem', border: '1px solid #e5e7eb', borderRadius: 6, outline: 'none' }}
                 />
-                <input
-                  type="number"
-                  min={0}
-                  step={0.1}
-                  value={ing.amount || ''}
-                  onChange={e => updateIng(idx, { amount: parseFloat(e.target.value) || 0 })}
-                  placeholder="量"
-                  style={{ width: 70, padding: '0.35rem 0.5rem', fontSize: '0.85rem', border: '1px solid #e5e7eb', borderRadius: 6, outline: 'none', textAlign: 'right' }}
-                />
+                {/* persons_per_unit が未設定の場合のみ amount を表示 */}
+                {!ing.persons_per_unit && (
+                  FRACTION_UNITS.has(ing.unit) ? (
+                    <select
+                      value={amountToFractionLabel(ing.amount) ?? ''}
+                      onChange={e => updateIng(idx, { amount: parseAmountInput(e.target.value || '0') })}
+                      style={{ width: 70, padding: '0.35rem 0.4rem', fontSize: '0.82rem', border: '1px solid #e5e7eb', borderRadius: 6, outline: 'none', background: '#fff' }}
+                    >
+                      <option value="">選択</option>
+                      {FRACTION_OPTIONS.map(o => <option key={o.label} value={o.label}>{o.label}</option>)}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={ing.amount || ''}
+                      onChange={e => updateIng(idx, { amount: parseAmountInput(e.target.value) })}
+                      placeholder="量（例: 0.5 / 1/2）"
+                      style={{ width: 70, padding: '0.35rem 0.5rem', fontSize: '0.85rem', border: '1px solid #e5e7eb', borderRadius: 6, outline: 'none', textAlign: 'right' }}
+                    />
+                  )
+                )}
+                {ing.persons_per_unit && (
+                  <div style={{ width: 70, fontSize: '0.75rem', color: '#9ca3af', textAlign: 'center' }}>—</div>
+                )}
                 <select
                   value={ing.unit}
                   onChange={e => updateIng(idx, { unit: e.target.value })}
-                  style={{ padding: '0.35rem 0.4rem', fontSize: '0.82rem', border: '1px solid #e5e7eb', borderRadius: 6, outline: 'none', background: '#fff' }}
+                  style={{ width: 70, padding: '0.35rem 0.4rem', fontSize: '0.82rem', border: '1px solid #e5e7eb', borderRadius: 6, outline: 'none', background: '#fff' }}
                 >
                   {UNIT_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
+                {/* 何人で1単位 */}
+                <div style={{ width: 110, display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={ing.persons_per_unit ?? ''}
+                    onChange={e => updateIng(idx, { persons_per_unit: e.target.value === '' ? null : parseInt(e.target.value) })}
+                    placeholder="例: 3"
+                    title="何人で1単位か（例: 3人で1束）"
+                    style={{ width: 50, padding: '0.35rem 0.4rem', fontSize: '0.85rem', border: `1px solid ${ing.persons_per_unit ? '#fcd34d' : '#e5e7eb'}`, borderRadius: 6, outline: 'none', textAlign: 'right', background: ing.persons_per_unit ? '#fffbeb' : '#fff' }}
+                  />
+                  <span style={{ fontSize: '0.72rem', color: '#9ca3af', whiteSpace: 'nowrap' }}>
+                    人/{ing.unit || '単位'}
+                  </span>
+                </div>
+                <select
+                  value={ing.supplier_id ?? ''}
+                  onChange={e => updateIng(idx, { supplier_id: e.target.value === '' ? null : Number(e.target.value) })}
+                  style={{ padding: '0.35rem 0.4rem', fontSize: '0.82rem', border: '1px solid #e5e7eb', borderRadius: 6, outline: 'none', background: '#fff', minWidth: 80 }}
+                >
+                  <option value="">仕入先</option>
+                  {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
                 <button
                   type="button"

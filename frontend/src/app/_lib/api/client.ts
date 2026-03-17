@@ -1,101 +1,224 @@
-import axios from 'axios';
+import axios, { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 
 const client = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost/api',
   headers: { 'Content-Type': 'application/json' },
 });
 
+// APIキャッシュはデフォルト無効（必要時のみ明示ON）
+const ENABLE_CACHE = process.env.NEXT_PUBLIC_ENABLE_API_CACHE === 'true';
+const CACHE_TTL = 5 * 60 * 1000; // 5分
+
+// 簡易キャッシュ（クライアントサイドのみ）
+const getCache = (): Map<string, { data: any; timestamp: number }> | null => {
+  if (!ENABLE_CACHE || typeof window === 'undefined') return null;
+  if (!(window as any).__apiCache) {
+    (window as any).__apiCache = new Map();
+  }
+  return (window as any).__apiCache;
+};
+
 // リクエストごとにトークンを付与
-client.interceptors.request.use((config) => {
+client.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  
+  // GETリクエストのキャッシュチェック
+  const cache = getCache();
+  if (cache && config.method === 'get' && config.url) {
+    try {
+      const cacheKey = `${config.url}${config.params ? JSON.stringify(config.params) : ''}`;
+      const cached = cache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+        config.adapter = () => Promise.resolve({
+          data: cached.data,
+          status: 200,
+          statusText: 'OK (cached)',
+          headers: {},
+          config,
+        } as any);
+      }
+    } catch (e) {
+      // キャッシュエラーは無視
+    }
+  }
+  
   return config;
+});
+
+// レスポンスをキャッシュに保存
+client.interceptors.response.use((response) => {
+  const cache = getCache();
+  if (cache && response.config.method === 'get' && response.config.url) {
+    try {
+      const cacheKey = `${response.config.url}${response.config.params ? JSON.stringify(response.config.params) : ''}`;
+      cache.set(cacheKey, { data: response.data, timestamp: Date.now() });
+    } catch (e) {
+      // キャッシュエラーは無視
+    }
+  }
+  return response;
 });
 
 export default client;
 
+// キャッシュをクリアする関数
+export const clearCache = () => {
+  try {
+    const cache = getCache();
+    if (cache) {
+      cache.clear();
+    }
+  } catch (e) {
+    // エラーは無視
+  }
+};
+
+const withCacheClear = async <T>(request: Promise<T>): Promise<T> => {
+  const res = await request;
+  clearCache();
+  return res;
+};
+
 // --- Auth ---
 export const login = (login_id: string, password: string) =>
-  client.post<{ ok: boolean; token: string; user: AuthUser }>('/auth/login.json', { login_id, password });
-export const logout = () => client.post('/auth/logout.json');
-export const getMe = () => client.get<{ ok: boolean; user: AuthUser }>('/auth/me.json');
+  client.post<{ ok: boolean; token: string; user: AuthUser }>('/auth/login', { login_id, password });
+export const logout = () => client.post('/auth/logout');
+export const getMe = () => client.get<{ ok: boolean; user: AuthUser }>('/auth/me');
 
 // --- Users ---
-export const fetchUsers = () => client.get<{ ok: boolean; users: UserRecord[] }>('/users.json');
-export const createUser = (data: UserInput) => client.post<{ ok: boolean; user: UserRecord }>('/users.json', data);
-export const updateUser = (id: number, data: Partial<UserInput>) => client.put<{ ok: boolean; user: UserRecord }>(`/users/${id}.json`, data);
-export const deleteUser = (id: number) => client.delete(`/users/${id}.json`);
+export const fetchUsers = () => client.get<{ ok: boolean; users: UserRecord[] }>('/users');
+export const createUser = (data: UserInput) => withCacheClear(client.post<{ ok: boolean; user: UserRecord }>('/users', data));
+export const updateUser = (id: number, data: Partial<UserInput>) => withCacheClear(client.put<{ ok: boolean; user: UserRecord }>(`/users/${id}`, data));
+export const deleteUser = (id: number) => withCacheClear(client.delete(`/users/${id}`));
 
 // --- Orders ---
-export const fetchOrders = () => client.get('/orders.json');
+export const fetchOrders = () => client.get('/orders');
 export const fetchOrderSummary = (date: string) =>
-  client.get(`/orders/summary.json?date=${date}`);
-export const createOrder = (data: OrderInput) => client.post('/orders.json', data);
+  client.get(`/orders/summary?date=${date}`);
+export const createOrder = (data: OrderInput) => withCacheClear(client.post('/orders', data));
 export const updateOrder = (id: number, data: Partial<OrderInput>) =>
-  client.put(`/orders/${id}.json`, data);
-export const deleteOrder = (id: number) => client.delete(`/orders/${id}.json`);
+  withCacheClear(client.put(`/orders/${id}`, data));
+export const deleteOrder = (id: number) => withCacheClear(client.delete(`/orders/${id}`));
 
 // --- Menus ---
 export const fetchMenus = (date?: string) =>
-  client.get<{ menus: MenuItem[] }>(`/menus.json${date ? `?date=${date}` : ''}`);
+  client.get<{ menus: MenuItem[] }>(`/menus${date ? `?date=${date}` : ''}`);
 export const fetchMenusByMonth = (year: number, month: number) =>
-  client.get<{ menus: MenuItem[] }>(`/menus.json?year=${year}&month=${month}`);
-export const saveMenu = (data: MenuInput) => client.post<{ success: boolean; menu: MenuItem }>('/menus.json', data);
-export const deleteMenu = (id: number) => client.delete(`/menus/${id}.json`);
+  client.get<{ menus: MenuItem[] }>(`/menus?year=${year}&month=${month}`);
+export const saveMenu = async (data: MenuInput) => {
+  const res = await client.post<{ success: boolean; menu: MenuItem }>('/menus', data);
+  clearCache(); // データ更新時はキャッシュクリア
+  return res;
+};
+export const deleteMenu = async (id: number) => {
+  const res = await client.delete(`/menus/${id}`);
+  clearCache();
+  return res;
+};
+export const copyMenusRoutine = async (data: MenuRoutineCopyInput) => {
+  const res = await client.post<MenuRoutineCopyResponse>('/menus/copy-routine', data);
+  clearCache();
+  return res;
+};
 
 // --- Menu Ingredients ---
 export const fetchMenuIngredients = (menuMasterId: number) =>
-  client.get<{ ok: boolean; ingredients: MenuIngredient[] }>(`/menu-ingredients.json?menu_master_id=${menuMasterId}`);
+  client.get<{ ok: boolean; ingredients: MenuIngredient[] }>(`/menu-ingredients?menu_master_id=${menuMasterId}`);
 export const saveMenuIngredients = (menuMasterId: number, items: MenuIngredientInput[]) =>
-  client.post<{ ok: boolean; ingredients: MenuIngredient[] }>('/menu-ingredients.json', { menu_master_id: menuMasterId, items });
+  withCacheClear(client.post<{ ok: boolean; ingredients: MenuIngredient[] }>('/menu-ingredients', { menu_master_id: menuMasterId, items }));
 
 // --- Menu Masters ---
 export const fetchMenuMasters = (blockId?: number) =>
   client.get<{ ok: boolean; menu_masters: MenuMaster[] }>(
-    blockId != null ? `/menu-masters.json?block_id=${blockId}` : '/menu-masters.json'
+    blockId != null ? `/menu-masters?block_id=${blockId}` : '/menu-masters'
   );
 export const createMenuMaster = (data: MenuMasterInput) =>
-  client.post<{ ok: boolean; menu_master: MenuMaster }>('/menu-masters.json', data);
+  withCacheClear(client.post<{ ok: boolean; menu_master: MenuMaster }>('/menu-masters', data));
 export const updateMenuMaster = (id: number, data: MenuMasterInput) =>
-  client.put<{ ok: boolean; menu_master: MenuMaster }>(`/menu-masters/${id}.json`, data);
+  withCacheClear(client.put<{ ok: boolean; menu_master: MenuMaster }>(`/menu-masters/${id}`, data));
 export const deleteMenuMaster = (id: number) =>
-  client.delete(`/menu-masters/${id}.json`);
+  withCacheClear(client.delete(`/menu-masters/${id}`));
+
+// --- Suppliers ---
+export const fetchSuppliers = () => client.get<{ ok: boolean; suppliers: Supplier[] }>('/suppliers');
+export const createSupplier = (data: SupplierInput) => withCacheClear(client.post<{ ok: boolean; supplier: Supplier }>('/suppliers', data));
+export const updateSupplier = (id: number, data: SupplierInput) => withCacheClear(client.put<{ ok: boolean; supplier: Supplier }>(`/suppliers/${id}`, data));
+export const deleteSupplier = (id: number) => withCacheClear(client.delete(`/suppliers/${id}`));
+
+// --- Order Sheets ---
+export const fetchOrderSheetPreview = (weekStart: string) =>
+  client.get<OrderSheetPreviewResponse>(`/order-sheets/calculate?week_start=${weekStart}`);
+export const fetchInventoryPreview = (weekStart: string) =>
+  client.get<InventoryPreviewResponse>(`/order-sheets/inventory?week_start=${weekStart}`);
+export const downloadOrderSheet = (
+  weekStart: string,
+  supplierId: number,
+  days: Record<string, { name: string; amount: number; unit: string }[]>,
+) =>
+  client.post(`/order-sheets/download`, { week_start: weekStart, supplier_id: supplierId, days }, { responseType: 'blob' });
+export const fetchOrderSheetPdf = (
+  weekStart: string,
+  supplierId: number,
+  days: Record<string, { name: string; amount: number; unit: string }[]>,
+) =>
+  client.post(`/order-sheets/pdf`, { week_start: weekStart, supplier_id: supplierId, days }, { responseType: 'blob' });
+
+// --- Coop Orders (生協発注) ---
+export const fetchCoopOrders = (weekStart: string) =>
+  client.get<CoopOrdersResponse>(`/coop-orders?week_start=${weekStart}`)
+export const saveCoopOrders = (data: SaveCoopOrdersInput) =>
+  withCacheClear(client.post<{ ok: boolean; saved: number }>('/coop-orders', data))
+
+// --- Menu Table (献立表) ---
+export const fetchMenuTable = (weekStart: string) =>
+  client.get<MenuTableResponse>(`/menu-table?week_start=${weekStart}`)
+export const downloadMenuTableExcel = (weekStart: string, type: 'staff' | 'children') =>
+  client.get(`/menu-table/excel?week_start=${weekStart}&type=${type}`, { responseType: 'blob' })
+export const fetchMenuTablePdf = (weekStart: string, type: 'staff' | 'children') =>
+  client.get(`/menu-table/pdf?week_start=${weekStart}&type=${type}`, { responseType: 'blob' })
+
+// --- AI ---
+export const suggestMenuByAi = (data: AiMenuSuggestInput) =>
+  client.post<AiMenuSuggestResponse>('/ai/menu-suggest', data)
+export const draftMenuMasterByAi = (data: AiMenuMasterDraftInput) =>
+  client.post<AiMenuMasterDraftResponse>('/ai/menu-master-draft', data)
 
 // --- Kamaho Rooms Sync ---
 export const syncKamahoRooms = () =>
-  client.post<{ ok: boolean; added: string[]; rooms: Room[]; kamaho_rooms: string[] }>('/rooms/sync-kamaho.json');
+  client.post<{ ok: boolean; added: string[]; rooms: Room[]; kamaho_rooms: string[] }>('/rooms/sync-kamaho');
 
 // --- Kamaho meal counts ---
 /** kamaho-shokusu.jp から指定日の食数を取得する */
 export const fetchKamahoMealCounts = (date: string) =>
-  client.get<KamahoMealCountsResponse>(`/kamaho-meal-counts.json?date=${date}`);
+  client.get<KamahoMealCountsResponse>(`/kamaho-meal-counts?date=${date}`);
 
 // --- Daily order quantities (旧) ---
 export const fetchOrderQuantities = (date: string) =>
-  client.get<OrderQuantitiesResponse>(`/order-quantities.json?date=${date}`);
+  client.get<OrderQuantitiesResponse>(`/order-quantities?date=${date}`);
 export const saveOrderQuantities = (data: SaveOrderQuantitiesInput) =>
-  client.post<{ ok: boolean; saved: OrderQuantityItem[] }>('/order-quantities.json', data);
+  withCacheClear(client.post<{ ok: boolean; saved: OrderQuantityItem[] }>('/order-quantities', data));
 
 // --- Rooms ---
-export const fetchRooms = () => client.get<{ ok: boolean; rooms: Room[] }>('/rooms.json');
+export const fetchRooms = () => client.get<{ ok: boolean; rooms: Room[] }>('/rooms');
 export const createRoom = (data: { name: string; sort_order?: number }) =>
-  client.post<{ ok: boolean; room: Room }>('/rooms.json', data);
-export const deleteRoom = (id: number) => client.delete(`/rooms/${id}.json`);
+  withCacheClear(client.post<{ ok: boolean; room: Room }>('/rooms', data));
+export const deleteRoom = (id: number) => withCacheClear(client.delete(`/rooms/${id}`));
 
 // --- Blocks ---
-export const fetchBlocks = () => client.get<{ ok: boolean; blocks: Block[] }>('/blocks.json');
+export const fetchBlocks = () => client.get<{ ok: boolean; blocks: Block[] }>('/blocks');
 export const createBlock = (data: { name: string; room1_id: number; room2_id: number; sort_order?: number }) =>
-  client.post<{ ok: boolean; block: Block }>('/blocks.json', data);
-export const deleteBlock = (id: number) => client.delete(`/blocks/${id}.json`);
+  withCacheClear(client.post<{ ok: boolean; block: Block }>('/blocks', data));
+export const deleteBlock = (id: number) => withCacheClear(client.delete(`/blocks/${id}`));
 
 
 // --- Block order quantities (新) ---
 export const fetchBlockOrderQuantities = (date: string) =>
-  client.get<BlockOrderQuantitiesResponse>(`/block-order-quantities.json?date=${date}`);
+  client.get<BlockOrderQuantitiesResponse>(`/block-order-quantities?date=${date}`);
 export const saveBlockOrderQuantities = (data: SaveBlockOrderQuantitiesInput) =>
-  client.post('/block-order-quantities.json', data);
+  withCacheClear(client.post('/block-order-quantities', data));
 
 // --- Types ---
 export interface AuthUser {
@@ -148,12 +271,69 @@ export interface MenuItem {
   menu_ingredients?: MenuIngredient[];
 }
 
+export interface MenuRoutineCopyInput {
+  source_start: string;
+  target_start: string;
+  months?: number;
+  include_birthday_menu?: boolean;
+  replace_existing?: boolean;
+  block_id?: number | null;
+}
+
+export interface MenuRoutineCopyResponse {
+  ok: boolean;
+  source_start: string;
+  source_end: string;
+  target_start: string;
+  target_end: string;
+  months: number;
+  deleted: number;
+  copied: number;
+  message?: string;
+}
+
+export interface AiMenuSuggestInput {
+  date: string;
+  block_id?: number | null;
+  existing_by_meal?: Record<string, string[]>;
+}
+
+export interface AiMenuSuggestResponse {
+  ok: boolean;
+  date: string;
+  block_id: number | null;
+  suggestions: Record<string, string[]>;
+  candidate_count: number;
+  raw?: string;
+  message?: string;
+}
+
+export interface AiMenuMasterDraftInput {
+  name?: string;
+  block_id?: number | null;
+}
+
+export interface AiMenuMasterDraftResponse {
+  ok: boolean;
+  name: string;
+  name_generated?: boolean;
+  draft: {
+    grams_per_person: number;
+    memo: string;
+    ingredients: MenuIngredientInput[];
+  };
+  raw?: string;
+  message?: string;
+}
+
 export interface MenuIngredient {
   id: number;
   menu_master_id: number;
   name: string;
   amount: number;
   unit: string;
+  persons_per_unit: number | null;
+  supplier_id: number | null;
   sort_order: number;
 }
 
@@ -161,6 +341,8 @@ export interface MenuIngredientInput {
   name: string;
   amount: number;
   unit: string;
+  persons_per_unit?: number | null;
+  supplier_id?: number | null;
 }
 
 export interface MenuMaster {
@@ -268,6 +450,111 @@ export interface SaveBlockOrderQuantitiesInput {
     order_quantity: number;
     notes?: string;
   }>;
+}
+
+// --- Coop types ---
+export interface CoopItem {
+  id: number
+  name: string
+  unit: string
+  order_type: 'weekly' | 'daily'
+  sort_order: number
+  // weekly
+  quantity?: number
+  notes?: string
+  // daily
+  daily?: Record<string, number>
+}
+
+export interface CoopOrdersResponse {
+  ok: boolean
+  week_start: string
+  week_end: string
+  items: CoopItem[]
+}
+
+export interface SaveCoopOrdersInput {
+  week_start: string
+  items: Array<{
+    item_id: number
+    quantity?: number
+    notes?: string
+    daily?: Record<string, number>
+  }>
+}
+
+export interface Supplier {
+  id: number;
+  name: string;
+  code: string | null;
+  has_order_sheet: 0 | 1;
+  delivery_days: string;
+  order_day: number | null;
+  delivery_lead_weeks: 0 | 1;
+  file_ext: string;
+  notes: string | null;
+}
+
+export interface SupplierInput {
+  name: string;
+  code?: string;
+  has_order_sheet?: 0 | 1;
+  delivery_days: string;
+  order_day?: number | null;
+  delivery_lead_weeks?: 0 | 1;
+  file_ext: string;
+  notes?: string;
+}
+
+export interface InventoryPreviewResponse {
+  ok: boolean
+  week_start: string
+  /** dateStr => ingredients */
+  days: Record<string, { name: string; amount: number; unit: string }[]>
+}
+
+export interface OrderSheetIngredient {
+  name: string;
+  amount: number;
+  unit: string;
+}
+
+export interface OrderSheetSupplier {
+  supplier_id: number;
+  supplier_name: string;
+  days: Record<string, OrderSheetIngredient[]>;
+}
+
+export interface OrderSheetPreviewResponse {
+  ok: boolean;
+  week_start: string;
+  suppliers: OrderSheetSupplier[];
+}
+
+export interface MenuTableIngredient {
+  name: string
+  amount: number
+  unit: string
+  supplier_code: string
+  delivery_date: string
+}
+
+export interface MenuTableMenu {
+  menu_name: string
+  ingredients: MenuTableIngredient[]
+}
+
+export interface MenuTableDay {
+  date: string
+  meals: Record<string, MenuTableMenu[]>
+}
+
+export interface MenuTableResponse {
+  ok: boolean
+  week_start: string
+  week_end: string
+  /** dayIndex 0=Mon .. 6=Sun (配列で返却) */
+  days: MenuTableDay[]
 }
 
 export const MEAL_TYPE_LABELS: Record<MealType, string> = {

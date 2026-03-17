@@ -2,6 +2,7 @@
 namespace App\Controller\Api;
 
 use App\Controller\AppController;
+use App\Service\AuthService;
 
 /**
  * 認証 API
@@ -12,44 +13,34 @@ use App\Controller\AppController;
  */
 class AuthController extends AppController
 {
+    private AuthService $authService;
+
+    public function initialize(): void
+    {
+        parent::initialize();
+        $this->authService = new AuthService();
+    }
+
     /** POST /api/auth/login.json */
     public function login(): void
     {
-        $data     = $this->request->getData();
-        $loginId  = trim((string)($data['login_id'] ?? ''));
+        $data = $this->request->getData();
+        $loginId = trim((string)($data['login_id'] ?? ''));
         $password = (string)($data['password'] ?? '');
 
-        if (!$loginId || !$password) {
-            $this->response = $this->response->withStatus(400);
-            $this->set(['ok' => false, 'message' => 'ログインIDとパスワードは必須です']);
+        $result = $this->authService->login($loginId, $password);
+
+        if (!$result['success']) {
+            $this->response = $this->response->withStatus($result['status']);
+            $this->set(['ok' => false, 'message' => $result['message']]);
             $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
             return;
         }
-
-        $usersTable = $this->fetchTable('Users');
-        $user = $usersTable->find()->where(['login_id' => $loginId])->first();
-
-        if (!$user || !password_verify($password, $user->password)) {
-            $this->response = $this->response->withStatus(401);
-            $this->set(['ok' => false, 'message' => 'ログインIDまたはパスワードが正しくありません']);
-            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
-            return;
-        }
-
-        // トークン生成・保存
-        $token = bin2hex(random_bytes(32));
-        $user->api_token = $token;
-        $usersTable->save($user);
 
         $this->set([
-            'ok'    => true,
-            'token' => $token,
-            'user'  => [
-                'id'       => $user->id,
-                'name'     => $user->name,
-                'role'     => $user->role,
-                'block_id' => $user->block_id,
-            ],
+            'ok' => true,
+            'token' => $result['token'],
+            'user' => $result['user'],
         ]);
         $this->viewBuilder()->setOption('serialize', ['ok', 'token', 'user']);
     }
@@ -57,15 +48,10 @@ class AuthController extends AppController
     /** POST /api/auth/logout.json */
     public function logout(): void
     {
-        $token = $this->getBearerToken();
-        if ($token) {
-            $usersTable = $this->fetchTable('Users');
-            $user = $usersTable->find()->where(['api_token' => $token])->first();
-            if ($user) {
-                $user->api_token = null;
-                $usersTable->save($user);
-            }
-        }
+        $token = $this->authService->extractBearerToken(
+            $this->request->getHeaderLine('Authorization')
+        );
+        $this->authService->logout($token);
 
         $this->set(['ok' => true]);
         $this->viewBuilder()->setOption('serialize', ['ok']);
@@ -74,42 +60,22 @@ class AuthController extends AppController
     /** GET /api/auth/me.json */
     public function me(): void
     {
-        $token = $this->getBearerToken();
-        if (!$token) {
-            $this->response = $this->response->withStatus(401);
-            $this->set(['ok' => false, 'message' => '未認証']);
-            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
-            return;
-        }
+        $token = $this->authService->extractBearerToken(
+            $this->request->getHeaderLine('Authorization')
+        );
+        $result = $this->authService->getAuthenticatedUser($token);
 
-        $usersTable = $this->fetchTable('Users');
-        $user = $usersTable->find()->where(['api_token' => $token])->first();
-
-        if (!$user) {
-            $this->response = $this->response->withStatus(401);
-            $this->set(['ok' => false, 'message' => 'トークンが無効です']);
+        if (!$result['success']) {
+            $this->response = $this->response->withStatus($result['status']);
+            $this->set(['ok' => false, 'message' => $result['message']]);
             $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
             return;
         }
 
         $this->set([
-            'ok'   => true,
-            'user' => [
-                'id'       => $user->id,
-                'name'     => $user->name,
-                'role'     => $user->role,
-                'block_id' => $user->block_id,
-            ],
+            'ok' => true,
+            'user' => $result['user'],
         ]);
         $this->viewBuilder()->setOption('serialize', ['ok', 'user']);
-    }
-
-    private function getBearerToken(): ?string
-    {
-        $header = $this->request->getHeaderLine('Authorization');
-        if (preg_match('/^Bearer\s+(.+)$/i', $header, $m)) {
-            return $m[1];
-        }
-        return null;
     }
 }

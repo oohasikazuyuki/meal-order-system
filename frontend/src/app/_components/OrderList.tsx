@@ -29,8 +29,14 @@ export default function OrderList() {
 
   const handleDelete = async (id: number) => {
     if (!window.confirm('この発注を削除しますか？')) return
-    await deleteOrder(id)
-    load()
+    const prevOrders = orders
+    setOrders(prev => prev.filter(o => o.id !== id))
+    try {
+      await deleteOrder(id)
+    } catch {
+      setOrders(prevOrders)
+      window.alert('削除に失敗しました')
+    }
   }
 
   return (

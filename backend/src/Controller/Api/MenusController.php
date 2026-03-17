@@ -2,9 +2,18 @@
 namespace App\Controller\Api;
 
 use App\Controller\AppController;
+use App\Service\MenuService;
 
 class MenusController extends AppController
 {
+    private MenuService $menuService;
+
+    public function initialize(): void
+    {
+        parent::initialize();
+        $this->menuService = new MenuService();
+    }
+
     /**
      * GET /api/menus.json
      *   ?date=YYYY-MM-DD       → 特定日
@@ -12,22 +21,11 @@ class MenusController extends AppController
      */
     public function index(): void
     {
-        $table = $this->fetchTable('Menus');
-        $query = $table->find('all');
-
-        $date  = $this->request->getQuery('date');
-        $year  = $this->request->getQuery('year');
+        $date = $this->request->getQuery('date');
+        $year = $this->request->getQuery('year');
         $month = $this->request->getQuery('month');
 
-        if ($date) {
-            $query->where(['Menus.menu_date' => $date]);
-        } elseif ($year && $month) {
-            $from = sprintf('%04d-%02d-01', (int)$year, (int)$month);
-            $to   = date('Y-m-t', strtotime($from));
-            $query->where(['Menus.menu_date >=' => $from, 'Menus.menu_date <=' => $to]);
-        }
-
-        $menus = $query->orderBy(['Menus.menu_date' => 'ASC', 'Menus.meal_type' => 'ASC'])->toArray();
+        $menus = $this->menuService->getMenus($date, $year ? (int)$year : null, $month ? (int)$month : null);
         $this->set(compact('menus'));
         $this->viewBuilder()->setOption('serialize', ['menus']);
     }
@@ -35,42 +33,47 @@ class MenusController extends AppController
     /** POST /api/menus.json - メニュー登録（date+meal_typeでupsert） */
     public function add(): void
     {
-        $data  = $this->request->getData();
-        $table = $this->fetchTable('Menus');
+        $result = $this->menuService->saveMenu($this->request->getData());
 
-        $menuDate = $data['menu_date'] ?? null;
-        $mealType = isset($data['meal_type']) ? (int)$data['meal_type'] : null;
-        $blockId  = isset($data['block_id']) ? (int)$data['block_id'] : null;
-
-        $existing = null;
-        if ($menuDate && $mealType && $blockId) {
-            $existing = $table->find()
-                ->where(['menu_date' => $menuDate, 'meal_type' => $mealType, 'block_id' => $blockId])
-                ->first();
-        }
-
-        $menu = $existing
-            ? $table->patchEntity($existing, $data)
-            : $table->newEntity($data);
-
-        if ($table->save($menu)) {
-            $this->response = $this->response->withStatus($existing ? 200 : 201);
-            $this->set(['success' => true, 'menu' => $menu]);
-        } else {
-            $this->response = $this->response->withStatus(400);
-            $this->set(['success' => false, 'errors' => $menu->getErrors()]);
-        }
+        $this->response = $this->response->withStatus($result['status']);
+        $this->set([
+            'success' => $result['success'],
+            'menu' => $result['menu'],
+            'errors' => $result['errors']
+        ]);
         $this->viewBuilder()->setOption('serialize', ['success', 'menu', 'errors']);
     }
 
     /** DELETE /api/menus/:id.json */
     public function delete(int $id): void
     {
-        $table  = $this->fetchTable('Menus');
-        $entity = $table->get($id);
-        $table->delete($entity);
-
+        $this->menuService->deleteMenu($id);
         $this->set(['success' => true]);
         $this->viewBuilder()->setOption('serialize', ['success']);
+    }
+
+    /** POST /api/menus/copy-routine.json */
+    public function copyRoutine(): void
+    {
+        $data = $this->request->getData();
+        $sourceStart = (string)($data['source_start'] ?? '');
+        $targetStart = (string)($data['target_start'] ?? '');
+        $months = (int)($data['months'] ?? 2);
+        $includeBirthdayMenu = (bool)($data['include_birthday_menu'] ?? true);
+        $replaceExisting = (bool)($data['replace_existing'] ?? true);
+        $blockId = isset($data['block_id']) && $data['block_id'] !== '' ? (int)$data['block_id'] : null;
+
+        $result = $this->menuService->copyRoutine(
+            $sourceStart,
+            $targetStart,
+            $months,
+            $includeBirthdayMenu,
+            $replaceExisting,
+            $blockId
+        );
+
+        $this->response = $this->response->withStatus($result['status'] ?? 200);
+        $this->set($result);
+        $this->viewBuilder()->setOption('serialize', array_keys($result));
     }
 }

@@ -1,0 +1,66 @@
+/* ==============================
+   フォント最適化
+   ============================== */
+@font-face {
+  font-family: 'Noto Sans JP';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('Noto Sans JP');
+}
+
+/* ==============================
+   印刷スタイル
+   ============================== */
+@media print {
+  /* サイドバー・ヘッダー・フッターを非表示 */
+  .app-sidebar,
+  .app-header,
+  .app-footer,
+  .no-print {
+    display: none !important;
+  }
+
+  /* 全体レイアウトのリセット */
+  body {
+    background: white !important;
+  }
+
+  .app-layout {
+    display: block !important;
+  }
+
+  .app-main-wrapper {
+    margin-left: 0 !important;
+    width: 100% !important;
+    min-height: unset !important;
+  }
+
+  .app-main {
+    padding: 0.5cm 0.5cm !important;
+  }
+
+  /* 業者カード・日付カードは途中で改ページしない */
+  .supplier-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    box-shadow: none !important;
+    border: 1px solid #e5e7eb !important;
+    margin-bottom: 0.8rem;
+  }
+
+  .date-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* 業者間で改ページを許可 */
+  .supplier-card + .supplier-card {
+    break-before: auto;
+  }
+
+  /* 印刷専用要素を表示 */
+  .print-only {
+    display: block !important;
+  }
+}

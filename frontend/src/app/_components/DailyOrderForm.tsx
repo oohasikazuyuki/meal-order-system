@@ -1,54 +1,103 @@
 'use client'
 
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import {
   fetchBlockOrderQuantities,
   saveBlockOrderQuantities,
+  fetchSuppliers,
+  fetchOrderSheetPdf,
   MEAL_TYPE_LABELS,
   type MealType,
   type BlockWithQuantities,
   type BlockQuantityRow,
+  type Supplier,
 } from '../_lib/api/client'
 
-function todayString(): string {
-  return new Date().toISOString().slice(0, 10)
+// ---- 日付ユーティリティ（タイムゾーン安全） ----
+function toDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })
+function getMondayStr(): string {
+  const d = new Date()
+  const dow = d.getDay() === 0 ? 7 : d.getDay()
+  d.setDate(d.getDate() - (dow - 1))
+  return toDateStr(d)
 }
 
-interface EditState {
-  [blockId: number]: {
-    [mealType: number]: { order_quantity: number; notes: string }
-  }
+function addDaysToStr(dateStr: string, n: number): string {
+  const [y, m, day] = dateStr.split('-').map(Number)
+  const d = new Date(y, m - 1, day + n)
+  return toDateStr(d)
 }
 
+function getWeekDates(weekStartStr: string): string[] {
+  return Array.from({ length: 7 }, (_, i) => addDaysToStr(weekStartStr, i))
+}
+
+function formatDateLabel(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  const dow = ['日', '月', '火', '水', '木', '金', '土'][dt.getDay()]
+  return `${m}/${d}(${dow})`
+}
+
+function formatFullDate(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  const dow = ['日曜日', '月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日'][dt.getDay()]
+  return `${y}年${m}月${d}日（${dow}）`
+}
+
+// ---- 型定義 ----
+interface DayEditState {
+  [blockId: number]: { [mealType: number]: { order_quantity: number; notes: string } }
+}
+type WeekData = { [dateStr: string]: BlockWithQuantities[] }
+type WeekEditState = { [dateStr: string]: DayEditState }
+
+// ========================
+// メインコンポーネント
+// ========================
 export default function DailyOrderForm() {
-  const [date, setDate] = useState<string>(todayString())
-  const [blocks, setBlocks] = useState<BlockWithQuantities[]>([])
-  const [editState, setEditState] = useState<EditState>({})
+  const [weekStart, setWeekStart] = useState<string>(getMondayStr)
+  const [activeDay, setActiveDay] = useState<number>(0) // 0=月〜6=日
+  const [weekData, setWeekData] = useState<WeekData>({})
+  const [weekEditState, setWeekEditState] = useState<WeekEditState>({})
   const [loading, setLoading] = useState(false)
-  const [saving, setSaving] = useState<number | null>(null)
+  const [saving, setSaving] = useState<string | null>(null) // dateStr or 'all'
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
-  const printRef = useRef<HTMLDivElement>(null)
+  const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [showPrintMenu, setShowPrintMenu] = useState(false)
+  const [downloading, setDownloading] = useState<number | null>(null)
 
-  const loadData = useCallback(async (targetDate: string) => {
+  const weekDates = getWeekDates(weekStart)
+
+  const loadWeek = useCallback(async (ws: string) => {
     setLoading(true)
     setError(null)
     setSuccessMsg(null)
     try {
-      const res = await fetchBlockOrderQuantities(targetDate)
-      setBlocks(res.data.blocks)
-      const state: EditState = {}
-      for (const block of res.data.blocks) {
-        state[block.id] = {}
-        for (const q of block.quantities) {
-          state[block.id][q.meal_type] = { order_quantity: q.order_quantity, notes: q.notes }
+      const dates = getWeekDates(ws)
+      const results = await Promise.all(dates.map(d => fetchBlockOrderQuantities(d)))
+
+      const newData: WeekData = {}
+      const newEdit: WeekEditState = {}
+      results.forEach((res, i) => {
+        const ds = dates[i]
+        newData[ds] = res.data.blocks
+        const state: DayEditState = {}
+        for (const block of res.data.blocks) {
+          state[block.id] = {}
+          for (const q of block.quantities) {
+            state[block.id][q.meal_type] = { order_quantity: q.order_quantity, notes: q.notes }
+          }
         }
-      }
-      setEditState(state)
+        newEdit[ds] = state
+      })
+      setWeekData(newData)
+      setWeekEditState(newEdit)
     } catch {
       setError('データの読み込みに失敗しました')
     } finally {
@@ -56,55 +105,79 @@ export default function DailyOrderForm() {
     }
   }, [])
 
-  useEffect(() => { loadData(date) }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadWeek(weekStart) }, [weekStart, loadWeek])
 
-  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const d = e.target.value
-    setDate(d)
-    if (d) loadData(d)
+  // 仕入先リストを初回ロード（キャッシュされるため2回目以降は高速）
+  useEffect(() => {
+    fetchSuppliers().then(res => setSuppliers(res.data.suppliers)).catch(() => {})
+  }, [])
+
+  const handlePrintPdf = async (supplier: Supplier) => {
+    setDownloading(supplier.id)
+    setShowPrintMenu(false)
+    setError(null)
+    try {
+      // days を空で送ることでバックエンドが今日の週を基準に DB から食材を取得する
+      const res = await fetchOrderSheetPdf(weekStart, supplier.id, {})
+      const blob = new Blob([res.data], { type: 'application/pdf' })
+      const url = URL.createObjectURL(blob)
+      // 新タブでPDFを開く（ブラウザのPDFビューアで印刷可能）
+      const win = window.open(url, '_blank')
+      if (!win) {
+        // ポップアップブロック時はダウンロードにフォールバック
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `${supplier.name}_${weekStart}週.pdf`
+        a.click()
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 30000)
+    } catch {
+      setError(`${supplier.name}の発注書PDF生成に失敗しました`)
+    } finally {
+      setDownloading(null)
+    }
   }
 
-  const handleSaveBlock = async (block: BlockWithQuantities) => {
-    setSaving(block.id)
-    setError(null)
-    setSuccessMsg(null)
-    try {
-      const items = block.quantities.map((q) => ({
+  const handlePrevWeek = () => setWeekStart(ws => addDaysToStr(ws, -7))
+  const handleNextWeek = () => setWeekStart(ws => addDaysToStr(ws, 7))
+  const handleThisWeek = () => setWeekStart(getMondayStr())
+
+  const updateEditState = (dateStr: string, blockId: number, mealType: MealType, patch: { order_quantity?: number; notes?: string }) => {
+    setWeekEditState(prev => ({
+      ...prev,
+      [dateStr]: {
+        ...prev[dateStr],
+        [blockId]: {
+          ...prev[dateStr]?.[blockId],
+          [mealType]: { ...prev[dateStr]?.[blockId]?.[mealType], ...patch },
+        },
+      },
+    }))
+  }
+
+  const buildItems = (dateStr: string) => {
+    const blocks = weekData[dateStr] ?? []
+    const es = weekEditState[dateStr] ?? {}
+    return blocks.flatMap(block =>
+      block.quantities.map(q => ({
         block_id: block.id,
         meal_type: q.meal_type,
         room1_kamaho_count: q.room1_kamaho_count,
         room2_kamaho_count: q.room2_kamaho_count,
-        order_quantity: editState[block.id]?.[q.meal_type]?.order_quantity ?? q.order_quantity,
-        notes: editState[block.id]?.[q.meal_type]?.notes ?? q.notes,
+        order_quantity: es[block.id]?.[q.meal_type]?.order_quantity ?? q.order_quantity,
+        notes: es[block.id]?.[q.meal_type]?.notes ?? q.notes,
       }))
-      await saveBlockOrderQuantities({ order_date: date, items })
-      setSuccessMsg(`${block.name} を保存しました`)
-      loadData(date)
-    } catch {
-      setError(`${block.name} の保存に失敗しました`)
-    } finally {
-      setSaving(null)
-    }
+    )
   }
 
-  const handleSaveAll = async () => {
-    setSaving(-1)
+  const handleSaveDay = async (dateStr: string) => {
+    setSaving(dateStr)
     setError(null)
     setSuccessMsg(null)
     try {
-      const items = blocks.flatMap((block) =>
-        block.quantities.map((q) => ({
-          block_id: block.id,
-          meal_type: q.meal_type,
-          room1_kamaho_count: q.room1_kamaho_count,
-          room2_kamaho_count: q.room2_kamaho_count,
-          order_quantity: editState[block.id]?.[q.meal_type]?.order_quantity ?? q.order_quantity,
-          notes: editState[block.id]?.[q.meal_type]?.notes ?? q.notes,
-        }))
-      )
-      await saveBlockOrderQuantities({ order_date: date, items })
-      setSuccessMsg('全ブロックを保存しました')
-      loadData(date)
+      await saveBlockOrderQuantities({ order_date: dateStr, items: buildItems(dateStr) })
+      setSuccessMsg(`${formatDateLabel(dateStr)} を保存しました`)
+      await loadWeek(weekStart)
     } catch {
       setError('保存に失敗しました')
     } finally {
@@ -112,76 +185,110 @@ export default function DailyOrderForm() {
     }
   }
 
-  const handlePrint = () => window.print()
+  const handleSaveAll = async () => {
+    setSaving('all')
+    setError(null)
+    setSuccessMsg(null)
+    try {
+      for (const dateStr of weekDates) {
+        const items = buildItems(dateStr)
+        if (items.length > 0) {
+          await saveBlockOrderQuantities({ order_date: dateStr, items })
+        }
+      }
+      setSuccessMsg('週全体を保存しました')
+      await loadWeek(weekStart)
+    } catch {
+      setError('保存に失敗しました')
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  const activeDateStr = weekDates[activeDay]
+  const activeBlocks = weekData[activeDateStr] ?? []
+  const activeEditState = weekEditState[activeDateStr] ?? {}
+
+  // 週の保存状況サマリー
+  const savedDayCount = weekDates.filter(ds => {
+    const blocks = weekData[ds] ?? []
+    return blocks.length > 0 && blocks.every(b => b.quantities.every(q => q.saved_id !== null))
+  }).length
 
   return (
-    <>
-      {/* 印刷スタイル */}
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          .print-area, .print-area * { visibility: visible; }
-          .print-area { position: absolute; left: 0; top: 0; width: 100%; }
-          .no-print { display: none !important; }
-          table { page-break-inside: avoid; }
-        }
-      `}</style>
-
-      <div>
-        {/* コントロールバー */}
-        <div className="no-print" style={{
-          background: '#fff',
-          borderRadius: 12,
-          padding: '1rem 1.5rem',
-          marginBottom: '1.5rem',
-          boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '1rem',
-          flexWrap: 'wrap',
+    <div>
+        {/* 週ナビゲーションバー */}
+        <div className="" style={{
+          background: '#fff', borderRadius: 12, padding: '0.9rem 1.5rem',
+          marginBottom: '1rem', boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+          display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <label htmlFor="order-date" style={{ fontWeight: 600, color: '#374151', fontSize: '0.9rem', whiteSpace: 'nowrap' }}>
-              発注日
-            </label>
-            <input
-              id="order-date"
-              type="date"
-              value={date}
-              onChange={handleDateChange}
-              style={{
-                padding: '0.5rem 0.75rem',
-                fontSize: '0.95rem',
-                border: '2px solid #e5e7eb',
-                borderRadius: 8,
-                outline: 'none',
-                color: '#1a202c',
-              }}
-            />
+          <button onClick={handlePrevWeek} disabled={loading} style={navBtnStyle}>← 前週</button>
+
+          <div style={{ fontWeight: 700, fontSize: '1rem', color: '#1a3a5c', minWidth: 180, textAlign: 'center' }}>
+            {formatDateLabel(weekDates[0])} 〜 {formatDateLabel(weekDates[6])}
           </div>
 
-          <button
-            onClick={() => loadData(date)}
-            disabled={loading}
-            style={btnStyle('#2563eb', loading)}
-          >
-            {loading ? '取得中...' : '🔄 kamaho から食数取得'}
-          </button>
+          <button onClick={handleNextWeek} disabled={loading} style={navBtnStyle}>翌週 →</button>
+          <button onClick={handleThisWeek} style={{ ...navBtnStyle, background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }}>今週</button>
 
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.75rem' }}>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+            {savedDayCount > 0 && (
+              <span style={{ fontSize: '0.82rem', color: '#16a34a', fontWeight: 600 }}>
+                ✓ {savedDayCount}/7日 保存済
+              </span>
+            )}
             <button
               onClick={handleSaveAll}
-              disabled={saving !== null || blocks.length === 0}
-              style={btnStyle('#16a34a', saving !== null)}
+              disabled={saving !== null || loading}
+              style={btnStyle('#16a34a', saving !== null || loading)}
             >
-              {saving === -1 ? '保存中...' : '💾 全ブロック保存'}
+              {saving === 'all' ? '保存中...' : '💾 週全体を保存'}
             </button>
-            <button
-              onClick={handlePrint}
-              style={btnStyle('#6b7280', false)}
-            >
-              🖨 印刷
-            </button>
+            {/* 発注書（印刷用Excel）ダウンロード */}
+            <div style={{ position: 'relative' }}>
+              <button
+                onClick={() => setShowPrintMenu(v => !v)}
+                disabled={downloading !== null}
+                style={btnStyle('#6b7280', downloading !== null)}
+              >
+                {downloading !== null ? '⏳ 生成中...' : '🖨 発注書出力'}
+              </button>
+              {showPrintMenu && suppliers.length > 0 && (
+                <>
+                  {/* オーバーレイ（クリックで閉じる） */}
+                  <div
+                    onClick={() => setShowPrintMenu(false)}
+                    style={{ position: 'fixed', inset: 0, zIndex: 40 }}
+                  />
+                  <div style={{
+                    position: 'absolute', top: 'calc(100% + 6px)', right: 0,
+                    background: '#fff', borderRadius: 10, boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+                    border: '1px solid #e2e8f0', zIndex: 50, minWidth: 160, overflow: 'hidden',
+                  }}>
+                    <div style={{ padding: '0.5rem 0.9rem', fontSize: '0.75rem', fontWeight: 600, color: '#9ca3af', borderBottom: '1px solid #f1f5f9', background: '#f8fafc' }}>
+                      仕入先を選択
+                    </div>
+                    {suppliers.map(s => (
+                      <button
+                        key={s.id}
+                        onClick={() => handlePrintPdf(s)}
+                        style={{
+                          display: 'block', width: '100%', textAlign: 'left',
+                          padding: '0.6rem 0.9rem', background: 'none', border: 'none',
+                          cursor: 'pointer', fontSize: '0.9rem', color: '#374151',
+                          borderBottom: '1px solid #f1f5f9',
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.background = '#f0f9ff')}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                      >
+                        📄 {s.name}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
@@ -197,64 +304,79 @@ export default function DailyOrderForm() {
           </div>
         )}
 
-        {/* 印刷ヘッダー（印刷時のみ表示） */}
-        <div className="print-area" ref={printRef}>
-          <div style={{ display: 'none' }} className="print-header">
-            <h1 style={{ textAlign: 'center', fontSize: '1.2rem', marginBottom: 4 }}>食数発注表</h1>
-            <p style={{ textAlign: 'center', color: '#666', marginBottom: '1.5rem' }}>{formatDate(date)}</p>
-          </div>
+        {/* 曜日タブ */}
+        <div className="" style={{
+          display: 'flex', gap: '0.25rem', marginBottom: '1rem',
+          background: '#fff', borderRadius: 12, padding: '0.4rem',
+          boxShadow: '0 1px 4px rgba(0,0,0,0.08)', overflowX: 'auto',
+        }}>
+          {weekDates.map((ds, idx) => {
+            const blocks = weekData[ds] ?? []
+            const allSaved = blocks.length > 0 && blocks.every(b => b.quantities.every(q => q.saved_id !== null))
+            const active = idx === activeDay
+            return (
+              <button
+                key={ds}
+                onClick={() => setActiveDay(idx)}
+                style={{
+                  flex: 1, minWidth: 72, padding: '0.5rem 0.4rem',
+                  background: active ? '#1a3a5c' : 'transparent',
+                  color: active ? '#fff' : '#6b7280',
+                  border: 'none', borderRadius: 8, cursor: 'pointer',
+                  fontSize: '0.85rem', fontWeight: active ? 700 : 400,
+                  position: 'relative', transition: 'all 0.15s',
+                }}
+              >
+                {formatDateLabel(ds)}
+                {allSaved && (
+                  <span style={{
+                    display: 'block', fontSize: '0.65rem',
+                    color: active ? 'rgba(255,255,255,0.8)' : '#16a34a', marginTop: 1,
+                  }}>✓保存済</span>
+                )}
+              </button>
+            )
+          })}
+        </div>
 
+        {/* アクティブ日のコンテンツ */}
+        <div>
           {loading ? (
-            <div style={{ textAlign: 'center', padding: '4rem', color: '#9ca3af' }}>
+            <div style={{ background: '#fff', borderRadius: 12, padding: '4rem', textAlign: 'center', color: '#9ca3af', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
               <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>⏳</div>
               読み込み中...
             </div>
-          ) : blocks.length === 0 ? (
+          ) : activeBlocks.length === 0 ? (
             <div style={{ background: '#fff', borderRadius: 12, padding: '4rem', textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
               <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>📭</div>
               <p style={{ color: '#9ca3af', margin: 0 }}>ブロックが登録されていません</p>
-              <p style={{ color: '#9ca3af', fontSize: '0.85rem' }}>マスタ管理でブロックを追加してください</p>
             </div>
           ) : (
-            blocks.map((block) => (
+            activeBlocks.map(block => (
               <BlockSection
                 key={block.id}
                 block={block}
-                date={date}
-                editState={editState[block.id] ?? {}}
+                editState={activeEditState[block.id] ?? {}}
                 onQuantityChange={(mt, v) => {
                   const num = parseInt(v, 10)
-                  setEditState((prev) => ({
-                    ...prev,
-                    [block.id]: {
-                      ...prev[block.id],
-                      [mt]: { ...prev[block.id]?.[mt], order_quantity: isNaN(num) ? 0 : Math.max(0, num) },
-                    },
-                  }))
+                  updateEditState(activeDateStr, block.id, mt, { order_quantity: isNaN(num) ? 0 : Math.max(0, num) })
                 }}
-                onNotesChange={(mt, v) => {
-                  setEditState((prev) => ({
-                    ...prev,
-                    [block.id]: {
-                      ...prev[block.id],
-                      [mt]: { ...prev[block.id]?.[mt], notes: v },
-                    },
-                  }))
-                }}
-                onSave={() => handleSaveBlock(block)}
-                saving={saving === block.id}
+                onNotesChange={(mt, v) => updateEditState(activeDateStr, block.id, mt, { notes: v })}
+                onSave={() => handleSaveDay(activeDateStr)}
+                saving={saving === activeDateStr}
               />
             ))
           )}
         </div>
-      </div>
-    </>
+    </div>
   )
 }
 
+// ========================
+// BlockSection
+// ========================
 interface BlockSectionProps {
   block: BlockWithQuantities
-  date: string
   editState: Record<number, { order_quantity: number; notes: string }>
   onQuantityChange: (mt: MealType, value: string) => void
   onNotesChange: (mt: MealType, value: string) => void
@@ -264,25 +386,18 @@ interface BlockSectionProps {
 
 function BlockSection({ block, editState, onQuantityChange, onNotesChange, onSave, saving }: BlockSectionProps) {
   const totalKamaho = block.quantities.reduce((s, q) => s + q.total_kamaho_count, 0)
-  const totalOrder = block.quantities.reduce((s, q) => s + (editState[q.meal_type]?.order_quantity ?? q.order_quantity), 0)
-  const allSaved = block.quantities.every((q) => q.saved_id !== null)
+  const totalOrder  = block.quantities.reduce((s, q) => s + (editState[q.meal_type]?.order_quantity ?? q.order_quantity), 0)
+  const allSaved    = block.quantities.every(q => q.saved_id !== null)
 
   return (
     <div style={{
-      background: '#fff',
-      borderRadius: 12,
-      marginBottom: '1.5rem',
-      boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-      overflow: 'hidden',
-      border: '1px solid #e2e8f0',
+      background: '#fff', borderRadius: 12, marginBottom: '1.5rem',
+      boxShadow: '0 1px 4px rgba(0,0,0,0.08)', overflow: 'hidden', border: '1px solid #e2e8f0',
     }}>
-      {/* ブロックヘッダー */}
       <div style={{
         padding: '0.9rem 1.25rem',
         background: 'linear-gradient(135deg, #1e3a5f, #1a56db)',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <span style={{ fontWeight: 700, fontSize: '1rem', color: '#fff' }}>{block.name}</span>
@@ -290,17 +405,10 @@ function BlockSection({ block, editState, onQuantityChange, onNotesChange, onSav
             {block.room1.name} / {block.room2.name}
           </span>
           {allSaved && (
-            <span style={{
-              background: '#16a34a',
-              color: '#fff',
-              padding: '0.15rem 0.6rem',
-              borderRadius: 999,
-              fontSize: '0.75rem',
-              fontWeight: 600,
-            }}>保存済</span>
+            <span style={{ background: '#16a34a', color: '#fff', padding: '0.15rem 0.6rem', borderRadius: 999, fontSize: '0.75rem', fontWeight: 600 }}>保存済</span>
           )}
         </div>
-        <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        <div className="" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <span style={{ color: 'rgba(255,255,255,0.75)', fontSize: '0.85rem' }}>
             合計 {totalKamaho} 食 → 発注 {totalOrder} 食
           </span>
@@ -308,22 +416,17 @@ function BlockSection({ block, editState, onQuantityChange, onNotesChange, onSav
             onClick={onSave}
             disabled={saving}
             style={{
-              padding: '0.4rem 1rem',
-              background: saving ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.15)',
-              color: '#fff',
-              border: '1px solid rgba(255,255,255,0.4)',
-              borderRadius: 6,
-              cursor: saving ? 'not-allowed' : 'pointer',
-              fontSize: '0.85rem',
-              fontWeight: 600,
+              padding: '0.4rem 1rem', background: 'rgba(255,255,255,0.15)',
+              color: '#fff', border: '1px solid rgba(255,255,255,0.4)',
+              borderRadius: 6, cursor: saving ? 'not-allowed' : 'pointer',
+              fontSize: '0.85rem', fontWeight: 600,
             }}
           >
-            {saving ? '保存中...' : '保存'}
+            {saving ? '保存中...' : 'この日を保存'}
           </button>
         </div>
       </div>
 
-      {/* テーブル */}
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 680 }}>
           <thead>
@@ -342,21 +445,16 @@ function BlockSection({ block, editState, onQuantityChange, onNotesChange, onSav
           <tbody>
             {block.quantities.map((q: BlockQuantityRow) => {
               const es = editState[q.meal_type] ?? { order_quantity: q.order_quantity, notes: q.notes }
-              const isSaved = q.saved_id !== null
               return (
                 <tr key={q.meal_type} style={{
                   borderTop: '1px solid #f1f5f9',
-                  background: isSaved ? '#f0fdf4' : '#fff',
+                  background: q.saved_id !== null ? '#f0fdf4' : '#fff',
                 }}>
                   <td style={td}>
                     <span style={{
-                      display: 'inline-block',
-                      padding: '0.2rem 0.6rem',
-                      borderRadius: 4,
-                      background: mealTypeColor(q.meal_type) + '20',
-                      color: mealTypeColor(q.meal_type),
-                      fontSize: '0.8rem',
-                      fontWeight: 600,
+                      display: 'inline-block', padding: '0.2rem 0.6rem', borderRadius: 4,
+                      background: mealTypeColor(q.meal_type) + '20', color: mealTypeColor(q.meal_type),
+                      fontSize: '0.8rem', fontWeight: 600,
                     }}>
                       {MEAL_TYPE_LABELS[q.meal_type]}
                     </span>
@@ -373,55 +471,29 @@ function BlockSection({ block, editState, onQuantityChange, onNotesChange, onSav
                     <span style={{ fontWeight: 700, fontSize: '1rem', color: '#1a202c' }}>{q.total_kamaho_count}</span>
                   </td>
                   <td style={{ ...td, textAlign: 'right', color: '#0891b2' }}>
-                    {q.total_grams > 0 ? (
-                      <>{(q.total_grams / 1000).toFixed(1)} <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>kg</span></>
-                    ) : '—'}
+                    {q.total_grams > 0
+                      ? <>{(q.total_grams / 1000).toFixed(1)} <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>kg</span></>
+                      : '—'}
                   </td>
-                  <td style={{ ...td, textAlign: 'center' }} className="no-print">
+                  <td style={{ ...td, textAlign: 'center' }}>
                     <input
-                      type="number"
-                      min={0}
+                      type="number" min={0}
                       value={es.order_quantity}
-                      onChange={(e) => onQuantityChange(q.meal_type, e.target.value)}
-                      style={{
-                        width: 72,
-                        padding: '0.35rem 0.5rem',
-                        fontSize: '0.95rem',
-                        border: '2px solid #e5e7eb',
-                        borderRadius: 6,
-                        textAlign: 'right',
-                        outline: 'none',
-                        fontWeight: 600,
-                      }}
-                      onFocus={(e) => e.target.style.borderColor = '#2563eb'}
-                      onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
+                      onChange={e => onQuantityChange(q.meal_type, e.target.value)}
+                      style={{ width: 72, padding: '0.35rem 0.5rem', fontSize: '0.95rem', border: '2px solid #e5e7eb', borderRadius: 6, textAlign: 'right', outline: 'none', fontWeight: 600 }}
+                      onFocus={e => e.target.style.borderColor = '#2563eb'}
+                      onBlur={e => e.target.style.borderColor = '#e5e7eb'}
                     />
                   </td>
-                  {/* 印刷時の発注数量 */}
-                  <td style={{ ...td, textAlign: 'center', display: 'none', fontWeight: 700 }} className="print-only">
-                    {es.order_quantity}
-                  </td>
-                  <td style={td} className="no-print">
+                  <td style={td}>
                     <input
-                      type="text"
-                      value={es.notes}
-                      onChange={(e) => onNotesChange(q.meal_type, e.target.value)}
+                      type="text" value={es.notes}
+                      onChange={e => onNotesChange(q.meal_type, e.target.value)}
                       placeholder="メモ"
-                      style={{
-                        width: '100%',
-                        minWidth: 100,
-                        padding: '0.35rem 0.5rem',
-                        fontSize: '0.85rem',
-                        border: '2px solid #e5e7eb',
-                        borderRadius: 6,
-                        outline: 'none',
-                      }}
-                      onFocus={(e) => e.target.style.borderColor = '#2563eb'}
-                      onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
+                      style={{ width: '100%', minWidth: 100, padding: '0.35rem 0.5rem', fontSize: '0.85rem', border: '2px solid #e5e7eb', borderRadius: 6, outline: 'none' }}
+                      onFocus={e => e.target.style.borderColor = '#2563eb'}
+                      onBlur={e => e.target.style.borderColor = '#e5e7eb'}
                     />
-                  </td>
-                  <td style={{ ...td, color: '#6b7280', fontSize: '0.85rem', display: 'none' }} className="print-only">
-                    {es.notes}
                   </td>
                 </tr>
               )
@@ -439,31 +511,22 @@ function mealTypeColor(mt: MealType): string {
 
 function btnStyle(color: string, disabled: boolean): React.CSSProperties {
   return {
-    padding: '0.5rem 1rem',
-    background: disabled ? '#e5e7eb' : color,
-    color: disabled ? '#9ca3af' : '#fff',
-    border: 'none',
-    borderRadius: 8,
-    cursor: disabled ? 'not-allowed' : 'pointer',
-    fontSize: '0.875rem',
-    fontWeight: 600,
-    whiteSpace: 'nowrap',
+    padding: '0.5rem 1rem', background: disabled ? '#e5e7eb' : color,
+    color: disabled ? '#9ca3af' : '#fff', border: 'none', borderRadius: 8,
+    cursor: disabled ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600, whiteSpace: 'nowrap',
   }
 }
 
-const th: React.CSSProperties = {
-  padding: '0.65rem 0.9rem',
-  textAlign: 'left',
-  fontSize: '0.78rem',
-  fontWeight: 600,
-  color: '#6b7280',
-  textTransform: 'uppercase',
-  letterSpacing: '0.04em',
-  whiteSpace: 'nowrap',
+const navBtnStyle: React.CSSProperties = {
+  padding: '0.45rem 1rem', background: '#f3f4f6', color: '#374151',
+  border: '1px solid #e5e7eb', borderRadius: 8, cursor: 'pointer',
+  fontSize: '0.9rem', fontWeight: 600,
 }
 
-const td: React.CSSProperties = {
-  padding: '0.65rem 0.9rem',
-  fontSize: '0.9rem',
-  color: '#374151',
+const th: React.CSSProperties = {
+  padding: '0.65rem 0.9rem', textAlign: 'left', fontSize: '0.78rem',
+  fontWeight: 600, color: '#6b7280', textTransform: 'uppercase',
+  letterSpacing: '0.04em', whiteSpace: 'nowrap',
 }
+
+const td: React.CSSProperties = { padding: '0.65rem 0.9rem', fontSize: '0.9rem', color: '#374151' }

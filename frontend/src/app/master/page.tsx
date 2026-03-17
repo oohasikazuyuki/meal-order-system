@@ -4,10 +4,23 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   fetchRooms, createRoom, deleteRoom, syncKamahoRooms,
   fetchBlocks, createBlock, deleteBlock,
-  type Room, type Block,
+  fetchSuppliers, createSupplier, updateSupplier, deleteSupplier,
+  fetchKamahoMealCounts,
+  type Room, type Block, type Supplier, type SupplierInput,
 } from '../_lib/api/client'
 
-type Tab = 'rooms' | 'blocks'
+const getApiErrorMessage = (err: unknown, fallback: string): string => {
+  const maybe = err as { response?: { data?: { message?: string } } }
+  return maybe?.response?.data?.message || fallback
+}
+
+type Tab = 'rooms' | 'blocks' | 'suppliers'
+
+const TAB_LABELS: Record<Tab, string> = {
+  rooms: '🏠 部屋管理',
+  blocks: '🔗 ブロック管理',
+  suppliers: '🏪 仕入先管理',
+}
 
 export default function MasterPage() {
   const [tab, setTab] = useState<Tab>('rooms')
@@ -24,7 +37,7 @@ export default function MasterPage() {
         display: 'inline-flex',
         gap: '0.25rem',
       }}>
-        {(['rooms', 'blocks'] as Tab[]).map((t) => (
+        {(['rooms', 'blocks', 'suppliers'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -40,13 +53,14 @@ export default function MasterPage() {
               transition: 'all 0.15s',
             }}
           >
-            {t === 'rooms' ? '🏠 部屋管理' : '🔗 ブロック管理'}
+            {TAB_LABELS[t]}
           </button>
         ))}
       </div>
 
       {tab === 'rooms' && <RoomsTab />}
       {tab === 'blocks' && <BlocksTab />}
+      {tab === 'suppliers' && <SuppliersTab />}
     </div>
   )
 }
@@ -63,6 +77,8 @@ function RoomsTab() {
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+  const [mealCounts, setMealCounts] = useState<Record<string, Record<string, number>>>({})
+  const [loadingMealCounts, setLoadingMealCounts] = useState(false)
 
   const loadRooms = useCallback(async () => {
     setLoading(true)
@@ -76,7 +92,21 @@ function RoomsTab() {
     }
   }, [])
 
+  const loadMealCounts = useCallback(async () => {
+    setLoadingMealCounts(true)
+    try {
+      const today = new Date().toISOString().split('T')[0]
+      const res = await fetchKamahoMealCounts(today)
+      setMealCounts({ [today]: res.data.counts })
+    } catch {
+      // 食数取得エラーは無視（部屋管理は継続可能）
+    } finally {
+      setLoadingMealCounts(false)
+    }
+  }, [])
+
   useEffect(() => { loadRooms() }, [loadRooms])
+  useEffect(() => { loadMealCounts() }, [loadMealCounts])
 
   const handleSync = async () => {
     setSyncing(true)
@@ -92,6 +122,8 @@ function RoomsTab() {
       } else {
         setSuccessMsg('すべての部屋は登録済みです（新規追加なし）')
       }
+      // 食数も再取得
+      loadMealCounts()
     } catch {
       setError('kamaho との同期に失敗しました。接続設定を確認してください。')
     } finally {
@@ -118,11 +150,13 @@ function RoomsTab() {
 
   const handleDelete = async (room: Room) => {
     if (!confirm(`「${room.name}」を削除しますか？ブロックに含まれている場合は削除できません。`)) return
+    const prevRooms = rooms
+    setRooms(prev => prev.filter(r => r.id !== room.id))
     try {
       await deleteRoom(room.id)
       setSuccessMsg(`「${room.name}」を削除しました`)
-      loadRooms()
     } catch {
+      setRooms(prevRooms)
       setError('削除に失敗しました（ブロックで使用中の可能性があります）')
     }
   }
@@ -199,33 +233,49 @@ function RoomsTab() {
             <tr style={{ background: '#f8fafc' }}>
               <th style={th}>ID</th>
               <th style={th}>部屋名</th>
+              <th style={th}>本日の食数</th>
               <th style={{ ...th, width: 100, textAlign: 'center' }}>操作</th>
             </tr>
           </thead>
           <tbody>
-            {rooms.map((room, i) => (
-              <tr key={room.id} style={{ borderTop: '1px solid #f1f5f9', background: i % 2 === 0 ? '#fff' : '#fafafa' }}>
-                <td style={{ ...td, color: '#9ca3af', width: 60 }}>#{room.id}</td>
-                <td style={{ ...td, fontWeight: 500 }}>{room.name}</td>
-                <td style={{ ...td, textAlign: 'center' }}>
-                  <button
-                    onClick={() => handleDelete(room)}
-                    style={{
-                      padding: '0.3rem 0.75rem',
-                      background: '#fef2f2',
-                      color: '#dc2626',
-                      border: '1px solid #fca5a5',
-                      borderRadius: 6,
-                      cursor: 'pointer',
-                      fontSize: '0.8rem',
-                      fontWeight: 600,
-                    }}
-                  >
-                    削除
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {rooms.map((room, i) => {
+              const today = new Date().toISOString().split('T')[0]
+              const mealCount = mealCounts[today]?.[room.name]
+              return (
+                <tr key={room.id} style={{ borderTop: '1px solid #f1f5f9', background: i % 2 === 0 ? '#fff' : '#fafafa' }}>
+                  <td style={{ ...td, color: '#9ca3af', width: 60 }}>#{room.id}</td>
+                  <td style={{ ...td, fontWeight: 500 }}>{room.name}</td>
+                  <td style={td}>
+                    {loadingMealCounts ? (
+                      <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>読み込み中...</span>
+                    ) : mealCount !== undefined ? (
+                      <span style={{ background: '#dbeafe', color: '#1e40af', padding: '0.2rem 0.6rem', borderRadius: 4, fontSize: '0.85rem', fontWeight: 600 }}>
+                        {mealCount}食
+                      </span>
+                    ) : (
+                      <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>—</span>
+                    )}
+                  </td>
+                  <td style={{ ...td, textAlign: 'center' }}>
+                    <button
+                      onClick={() => handleDelete(room)}
+                      style={{
+                        padding: '0.3rem 0.75rem',
+                        background: '#fef2f2',
+                        color: '#dc2626',
+                        border: '1px solid #fca5a5',
+                        borderRadius: 6,
+                        cursor: 'pointer',
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                      }}
+                    >
+                      削除
+                    </button>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       )}
@@ -278,19 +328,21 @@ function BlocksTab() {
       setRoom1Id(0)
       setRoom2Id(0)
       load()
-    } catch {
-      setError('作成に失敗しました')
+    } catch (e) {
+      setError(getApiErrorMessage(e, '作成に失敗しました'))
     }
   }
 
   const handleDelete = async (block: Block) => {
     if (!confirm(`「${block.name}」を削除しますか？`)) return
+    const prevBlocks = blocks
+    setBlocks(prev => prev.filter(b => b.id !== block.id))
     try {
       await deleteBlock(block.id)
       setSuccessMsg(`「${block.name}」を削除しました`)
-      load()
-    } catch {
-      setError('削除に失敗しました')
+    } catch (e) {
+      setBlocks(prevBlocks)
+      setError(getApiErrorMessage(e, '削除に失敗しました'))
     }
   }
 
@@ -392,6 +444,502 @@ function BlocksTab() {
                   >
                     削除
                   </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
+// ========================
+// 仕入先管理タブ
+// ========================
+const DAY_LABELS = ['月', '火', '水', '木', '金', '土', '日']
+const WEEK_LABELS: Record<number, string> = { 0: '毎週', 1: '第1', 2: '第2', 3: '第3', 4: '第4', 5: '第5' }
+
+/** "D" or "N:D" エントリ1パートをラベル化 */
+function formatDaysPart(part: string): string {
+  if (!part.trim()) return ''
+  const dayWeeks: Record<number, number[]> = {}
+  for (const entry of part.split(',')) {
+    const t = entry.trim()
+    if (!t) continue
+    let week = 0, day: number
+    if (t.includes(':')) {
+      const [w, d] = t.split(':')
+      week = parseInt(w); day = parseInt(d)
+    } else {
+      day = parseInt(t)
+    }
+    if (day >= 0 && day <= 6) {
+      if (!dayWeeks[day]) dayWeeks[day] = []
+      dayWeeks[day].push(week)
+    }
+  }
+  return Object.entries(dayWeeks)
+    .sort((a, b) => Number(a[0]) - Number(b[0]))
+    .map(([dayStr, weeks]) => {
+      const label = DAY_LABELS[Number(dayStr)] ?? dayStr
+      if (weeks.includes(0)) return label
+      return weeks.sort((a, b) => a - b).map(w => `${WEEK_LABELS[w] ?? w}${label}`).join('・')
+    })
+    .join('・')
+}
+
+/** "D" or "N:D" or "今週days|翌週days" を表示ラベルに変換 */
+function formatDeliveryDays(days: string): string {
+  if (!days.trim()) return ''
+  if (days.includes('|')) {
+    const [thisStr, nextStr] = days.split('|', 2)
+    const thisPart = formatDaysPart(thisStr)
+    const nextPart = formatDaysPart(nextStr)
+    const parts = []
+    if (thisPart) parts.push(`今週:${thisPart}`)
+    if (nextPart) parts.push(`翌週:${nextPart}`)
+    return parts.join(' / ')
+  }
+  return formatDaysPart(days)
+}
+
+// ------- DeliveryDaysPicker -------
+interface DaySpec { enabled: boolean; weeks: number[] }
+
+function parseDeliverySpec(str: string): DaySpec[] {
+  const spec: DaySpec[] = Array.from({ length: 7 }, () => ({ enabled: false, weeks: [] }))
+  for (const entry of str.split(',')) {
+    const t = entry.trim()
+    if (!t) continue
+    let week = 0, day: number
+    if (t.includes(':')) {
+      const [w, d] = t.split(':')
+      week = parseInt(w); day = parseInt(d)
+    } else {
+      day = parseInt(t)
+    }
+    if (day >= 0 && day <= 6 && !isNaN(day)) {
+      spec[day].enabled = true
+      if (!spec[day].weeks.includes(week)) spec[day].weeks.push(week)
+    }
+  }
+  return spec
+}
+
+function formatDeliverySpec(spec: DaySpec[]): string {
+  const entries: string[] = []
+  for (let day = 0; day <= 6; day++) {
+    const { enabled, weeks } = spec[day]
+    if (!enabled) continue
+    const ws = weeks.length > 0 ? weeks : [0]
+    for (const w of ws.sort((a, b) => a - b)) {
+      entries.push(w === 0 ? String(day) : `${w}:${day}`)
+    }
+  }
+  return entries.join(',')
+}
+
+/** 翌週用シンプルな boolean[7] のパース・フォーマット */
+function parseSimpleWeek(str: string): boolean[] {
+  const result = Array(7).fill(false) as boolean[]
+  for (const t of str.split(',')) {
+    const n = parseInt(t.trim())
+    if (!isNaN(n) && n >= 0 && n <= 6) result[n] = true
+  }
+  return result
+}
+function formatSimpleWeek(bools: boolean[]): string {
+  return bools.map((v, i) => v ? String(i) : null).filter(Boolean).join(',')
+}
+
+function DeliveryDaysPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const hasPipe = value.includes('|')
+  const [thisSpec, setThisSpec] = useState<DaySpec[]>(() =>
+    parseDeliverySpec(hasPipe ? value.split('|')[0] : value))
+  const [nextDays, setNextDays] = useState<boolean[]>(() =>
+    hasPipe ? parseSimpleWeek(value.split('|')[1]) : Array(7).fill(false))
+  const [splitMode, setSplitMode] = useState(hasPipe)
+
+  // valueが外部から変わったとき（編集切替時）に再初期化
+  const [prevValue, setPrevValue] = useState(value)
+  if (value !== prevValue) {
+    setPrevValue(value)
+    const hp = value.includes('|')
+    setThisSpec(parseDeliverySpec(hp ? value.split('|')[0] : value))
+    setNextDays(hp ? parseSimpleWeek(value.split('|')[1]) : Array(7).fill(false))
+    setSplitMode(hp)
+  }
+
+  const emit = (ts: DaySpec[], nd: boolean[], sm: boolean) => {
+    if (sm) {
+      onChange(`${formatDeliverySpec(ts)}|${formatSimpleWeek(nd)}`)
+    } else {
+      onChange(formatDeliverySpec(ts))
+    }
+  }
+
+  const toggleMode = () => {
+    const newMode = !splitMode
+    setSplitMode(newMode)
+    if (!newMode) setNextDays(Array(7).fill(false))
+    emit(thisSpec, newMode ? nextDays : Array(7).fill(false), newMode)
+  }
+
+  const updateThis = (newSpec: DaySpec[]) => {
+    setThisSpec(newSpec)
+    emit(newSpec, nextDays, splitMode)
+  }
+
+  const toggleDay = (day: number) => {
+    const s = thisSpec.map((d, i) => i === day
+      ? { enabled: !d.enabled, weeks: d.enabled ? [] : [0] }
+      : d)
+    updateThis(s)
+  }
+
+  const toggleWeek = (day: number, week: number) => {
+    const daySpec = { ...thisSpec[day], weeks: [...thisSpec[day].weeks] }
+    if (week === 0) {
+      daySpec.weeks = daySpec.weeks.includes(0) ? [] : [0]
+    } else {
+      daySpec.weeks = daySpec.weeks.includes(week)
+        ? daySpec.weeks.filter(w => w !== week)
+        : [...daySpec.weeks.filter(w => w !== 0), week]
+    }
+    updateThis(thisSpec.map((d, i) => i === day ? daySpec : d))
+  }
+
+  const toggleNextDay = (day: number) => {
+    const nd = nextDays.map((v, i) => i === day ? !v : v)
+    setNextDays(nd)
+    emit(thisSpec, nd, splitMode)
+  }
+
+  const sectionLabel = (text: string, color: string) => (
+    <div style={{ fontSize: '0.72rem', fontWeight: 700, color, marginBottom: '0.2rem', marginTop: '0.3rem' }}>{text}</div>
+  )
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+      {/* モード切替ボタン */}
+      <button
+        type="button"
+        onClick={toggleMode}
+        style={{
+          alignSelf: 'flex-start', marginBottom: '0.25rem',
+          padding: '0.15rem 0.55rem', fontSize: '0.72rem', fontWeight: 600,
+          background: splitMode ? '#fef3c7' : '#f3f4f6',
+          color: splitMode ? '#92400e' : '#6b7280',
+          border: `1px solid ${splitMode ? '#fcd34d' : '#e5e7eb'}`,
+          borderRadius: 4, cursor: 'pointer',
+        }}
+      >
+        {splitMode ? '✓ 今週・翌週を別々に設定中' : '今週・翌週を別々に設定する'}
+      </button>
+
+      {/* 今週（splitMode時はラベル付き） */}
+      {splitMode && sectionLabel('【今週の納品曜日】', '#1a3a5c')}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+        {DAY_LABELS.map((label, day) => (
+          <div key={day} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minHeight: 28 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', minWidth: 44, cursor: 'pointer', fontSize: '0.88rem', fontWeight: 600, color: thisSpec[day].enabled ? '#1a3a5c' : '#9ca3af' }}>
+              <input type="checkbox" checked={thisSpec[day].enabled} onChange={() => toggleDay(day)} style={{ cursor: 'pointer' }} />
+              {label}曜
+            </label>
+            {thisSpec[day].enabled && !splitMode && (
+              <div style={{ display: 'flex', gap: '0.2rem', flexWrap: 'wrap' }}>
+                {([0, 1, 2, 3, 4, 5] as number[]).map(week => {
+                  const sel = thisSpec[day].weeks.includes(week)
+                  return (
+                    <button key={week} type="button" onClick={() => toggleWeek(day, week)}
+                      style={{ padding: '0.15rem 0.45rem', fontSize: '0.75rem', background: sel ? '#1a3a5c' : '#f3f4f6', color: sel ? '#fff' : '#6b7280', border: `1px solid ${sel ? '#1a3a5c' : '#e5e7eb'}`, borderRadius: 4, cursor: 'pointer', fontWeight: sel ? 600 : 400 }}>
+                      {WEEK_LABELS[week]}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* 翌週（splitModeのみ表示） */}
+      {splitMode && (
+        <>
+          {sectionLabel('【翌週の納品曜日】', '#d97706')}
+          <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+            {DAY_LABELS.map((label, day) => (
+              <label key={day} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', fontSize: '0.88rem', fontWeight: 600, color: nextDays[day] ? '#d97706' : '#9ca3af' }}>
+                <input type="checkbox" checked={nextDays[day]} onChange={() => toggleNextDay(day)} style={{ cursor: 'pointer' }} />
+                {label}曜
+              </label>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function SuppliersTab() {
+  const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [successMsg, setSuccessMsg] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [form, setForm] = useState<SupplierInput>({ name: '', code: '', has_order_sheet: 1, delivery_days: '', order_day: null, delivery_lead_weeks: 0, file_ext: 'xlsx', notes: '' })
+  const [showForm, setShowForm] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetchSuppliers()
+      setSuppliers(res.data.suppliers)
+    } catch {
+      setError('読み込み失敗')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const resetForm = () => {
+    setForm({ name: '', code: '', has_order_sheet: 1, delivery_days: '', order_day: null, delivery_lead_weeks: 0, file_ext: 'xlsx', notes: '' })
+    setEditingId(null)
+    setShowForm(false)
+  }
+
+  const handleEdit = (s: Supplier) => {
+    setForm({ name: s.name, code: s.code ?? '', has_order_sheet: s.has_order_sheet ?? 1, delivery_days: s.delivery_days, order_day: s.order_day ?? null, delivery_lead_weeks: s.delivery_lead_weeks ?? 0, file_ext: s.file_ext, notes: s.notes ?? '' })
+    setEditingId(s.id)
+    setShowForm(true)
+    setError(null)
+    setSuccessMsg(null)
+  }
+
+  const handleSave = async () => {
+    if (!form.name.trim()) {
+      setError('名前は必須です')
+      return
+    }
+    try {
+      setError(null)
+      if (editingId) {
+        await updateSupplier(editingId, form)
+        setSuccessMsg(`「${form.name}」を更新しました`)
+      } else {
+        await createSupplier(form)
+        setSuccessMsg(`「${form.name}」を追加しました`)
+      }
+      resetForm()
+      load()
+    } catch {
+      setError('保存に失敗しました')
+    }
+  }
+
+  const handleDelete = async (s: Supplier) => {
+    if (!confirm(`「${s.name}」を削除しますか？`)) return
+    const prevSuppliers = suppliers
+    setSuppliers(prev => prev.filter(x => x.id !== s.id))
+    try {
+      await deleteSupplier(s.id)
+      setSuccessMsg(`「${s.name}」を削除しました`)
+    } catch {
+      setSuppliers(prevSuppliers)
+      setError('削除に失敗しました')
+    }
+  }
+
+  return (
+    <div style={{ background: '#fff', borderRadius: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', overflow: 'hidden' }}>
+      {/* ツールバー */}
+      <div style={{ padding: '1rem 1.5rem', borderBottom: '1px solid #f1f5f9', background: '#fafafa', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ fontSize: '0.85rem', color: '#6b7280' }}>発注書を生成する仕入先を管理します</div>
+        <button
+          onClick={() => { resetForm(); setShowForm(true) }}
+          style={primaryBtn(false)}
+        >
+          + 仕入先を追加
+        </button>
+      </div>
+
+      {/* フォーム */}
+      {showForm && (
+        <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #e2e8f0', background: '#eff6ff' }}>
+          <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.75rem', color: '#1d4ed8' }}>
+            {editingId ? '仕入先を編集' : '新しい仕入先を追加'}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '180px 80px 1fr 1fr auto auto', gap: '1rem', alignItems: 'start' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: '#6b7280', marginBottom: '0.25rem' }}>名前</label>
+              <input
+                type="text"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="例：魚丹"
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: '#6b7280', marginBottom: '0.25rem' }}>記号</label>
+              <input
+                type="text"
+                value={form.code ?? ''}
+                onChange={(e) => setForm({ ...form, code: e.target.value })}
+                placeholder="例：U"
+                maxLength={5}
+                style={{ ...inputStyle, textAlign: 'center' }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: '#6b7280', marginBottom: '0.4rem' }}>
+                納品曜日（毎週 or 第N週を選択）
+              </label>
+              <DeliveryDaysPicker
+                key={editingId ?? 'new'}
+                value={form.delivery_days}
+                onChange={(v) => setForm({ ...form, delivery_days: v })}
+              />
+              {form.order_day !== null && form.order_day !== undefined && (
+                <div style={{ marginTop: '0.4rem', fontSize: '0.73rem', color: '#6b7280', lineHeight: 1.4 }}>
+                  ※ 発注曜日（{DAY_LABELS[form.order_day]}曜）より前の納品曜日は<br />
+                  　翌週納品として扱われます
+                </div>
+              )}
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: '#6b7280', marginBottom: '0.4rem' }}>
+                発注曜日
+              </label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.85rem', color: form.order_day === null ? '#1a3a5c' : '#9ca3af', cursor: 'pointer' }}>
+                  <input type="radio" name="order_day" checked={form.order_day === null} onChange={() => setForm({ ...form, order_day: null })} />
+                  今日の日付
+                </label>
+                {DAY_LABELS.map((label, day) => (
+                  <label key={day} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.85rem', color: form.order_day === day ? '#1a3a5c' : '#374151', cursor: 'pointer' }}>
+                    <input type="radio" name="order_day" checked={form.order_day === day} onChange={() => setForm({ ...form, order_day: day })} />
+                    {label}曜日
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: '#6b7280', marginBottom: '0.25rem' }}>ファイル形式</label>
+              <select
+                value={form.file_ext}
+                onChange={(e) => setForm({ ...form, file_ext: e.target.value })}
+                style={selectStyle}
+              >
+                <option value="xlsx">xlsx</option>
+                <option value="xlsm">xlsm</option>
+              </select>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingTop: '1.5rem' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', color: '#374151', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                <input
+                  type="checkbox"
+                  checked={form.has_order_sheet === 1}
+                  onChange={e => setForm({ ...form, has_order_sheet: e.target.checked ? 1 : 0 })}
+                />
+                発注書あり
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', color: form.delivery_lead_weeks === 1 ? '#d97706' : '#374151', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                <input
+                  type="checkbox"
+                  checked={form.delivery_lead_weeks === 1}
+                  onChange={e => setForm({ ...form, delivery_lead_weeks: e.target.checked ? 1 : 0 })}
+                />
+                翌週納品
+              </label>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button onClick={handleSave} style={primaryBtn(false)}>保存</button>
+                <button onClick={resetForm} style={{ ...primaryBtn(false), background: '#e5e7eb', color: '#374151' }}>キャンセル</button>
+              </div>
+            </div>
+          </div>
+          {error && <p style={{ margin: '0.5rem 0 0', color: '#dc2626', fontSize: '0.85rem' }}>⚠ {error}</p>}
+        </div>
+      )}
+
+      {/* メッセージ */}
+      {successMsg && (
+        <div style={{ padding: '0.6rem 1.5rem', borderBottom: '1px solid #f1f5f9' }}>
+          <p style={{ margin: 0, color: '#16a34a', fontSize: '0.85rem' }}>✓ {successMsg}</p>
+        </div>
+      )}
+      {!showForm && error && (
+        <div style={{ padding: '0.6rem 1.5rem', borderBottom: '1px solid #f1f5f9' }}>
+          <p style={{ margin: 0, color: '#dc2626', fontSize: '0.85rem' }}>⚠ {error}</p>
+        </div>
+      )}
+
+      {/* 一覧 */}
+      {loading ? (
+        <div style={{ padding: '2rem', textAlign: 'center', color: '#9ca3af' }}>読み込み中...</div>
+      ) : suppliers.length === 0 ? (
+        <div style={{ padding: '3rem', textAlign: 'center', color: '#9ca3af' }}>
+          <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🏪</div>
+          仕入先が登録されていません。
+        </div>
+      ) : (
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ background: '#f8fafc' }}>
+              <th style={th}>ID</th>
+              <th style={th}>名前</th>
+              <th style={th}>記号</th>
+              <th style={{ ...th, textAlign: 'center' }}>発注書</th>
+              <th style={th}>納品曜日</th>
+              <th style={th}>発注曜日</th>
+              <th style={{ ...th, textAlign: 'center' }}>翌週納品</th>
+              <th style={th}>ファイル形式</th>
+              <th style={{ ...th, width: 150, textAlign: 'center' }}>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {suppliers.map((s, i) => (
+              <tr key={s.id} style={{ borderTop: '1px solid #f1f5f9', background: i % 2 === 0 ? '#fff' : '#fafafa' }}>
+                <td style={{ ...td, color: '#9ca3af', width: 60 }}>#{s.id}</td>
+                <td style={{ ...td, fontWeight: 600 }}>{s.name}</td>
+                <td style={{ ...td, textAlign: 'center' }}>
+                  {s.code ? <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '0.15rem 0.5rem', borderRadius: 4, fontWeight: 700, fontSize: '0.85rem' }}>{s.code}</span> : <span style={{ color: '#d1d5db' }}>—</span>}
+                </td>
+                <td style={{ ...td, textAlign: 'center' }}>
+                  {s.has_order_sheet
+                    ? <span style={{ color: '#16a34a', fontWeight: 700 }}>✓</span>
+                    : <span style={{ color: '#9ca3af' }}>—</span>}
+                </td>
+                <td style={td}>{formatDeliveryDays(s.delivery_days)}</td>
+                <td style={td}>
+                  {s.order_day !== null && s.order_day !== undefined
+                    ? <span style={{ background: '#fef3c7', color: '#92400e', padding: '0.2rem 0.5rem', borderRadius: 4, fontSize: '0.85rem', fontWeight: 600 }}>{DAY_LABELS[s.order_day] ?? '—'}曜日</span>
+                    : <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>今日の日付</span>}
+                </td>
+                <td style={{ ...td, textAlign: 'center' }}>
+                  {s.delivery_lead_weeks === 1
+                    ? <span style={{ background: '#fef3c7', color: '#d97706', padding: '0.2rem 0.5rem', borderRadius: 4, fontSize: '0.85rem', fontWeight: 600 }}>翌週</span>
+                    : <span style={{ color: '#9ca3af' }}>—</span>}
+                </td>
+                <td style={td}><span style={{ background: '#f3f4f6', padding: '0.2rem 0.5rem', borderRadius: 4, fontSize: '0.85rem', fontFamily: 'monospace' }}>{s.file_ext}</span></td>
+                <td style={{ ...td, textAlign: 'center' }}>
+                  <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'center' }}>
+                    <button
+                      onClick={() => handleEdit(s)}
+                      style={{ padding: '0.3rem 0.75rem', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 6, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}
+                    >
+                      編集
+                    </button>
+                    <button
+                      onClick={() => handleDelete(s)}
+                      style={{ padding: '0.3rem 0.75rem', background: '#fef2f2', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: 6, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}
+                    >
+                      削除
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

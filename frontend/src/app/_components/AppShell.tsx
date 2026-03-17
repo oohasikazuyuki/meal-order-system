@@ -11,6 +11,9 @@ const navItems = [
   { href: '/daily-order', label: '食数発注', icon: '📋' },
   { href: '/menus', label: '献立管理', icon: '📅' },
   { href: '/menu-master', label: 'メニュー管理', icon: '🍽' },
+  { href: '/order-sheets', label: '発注書出力', icon: '📄' },
+  { href: '/coop-order',   label: '生協発注',   icon: '🛒' },
+  { href: '/menu-table',   label: '献立表出力', icon: '📋' },
   { href: '/master', label: 'マスタ管理', icon: '⚙' },
   { href: '/users', label: 'ユーザー管理', icon: '👤' },
 ]
@@ -18,12 +21,14 @@ const navItems = [
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
+  const noShellPaths = ['/login', '/400', '/500']
+  const isNoShellPath = noShellPaths.includes(pathname)
   const [user, setUser] = useState<AuthUser | null>(null)
   const [checking, setChecking] = useState(true)
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   useEffect(() => {
-    if (pathname === '/login') {
+    if (isNoShellPath) {
       setChecking(false)
       return
     }
@@ -33,7 +38,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
     setUser(getStoredUser())
     setChecking(false)
-  }, [pathname, router])
+  }, [isNoShellPath, pathname, router])
 
   const handleLogout = async () => {
     try { await logout() } catch { /* ignore */ }
@@ -42,7 +47,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   // ログインページはシェルなし
-  if (pathname === '/login') {
+  if (isNoShellPath) {
     return <>{children}</>
   }
 
@@ -55,9 +60,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh' }}>
+    <div className="app-layout" style={{ display: 'flex', minHeight: '100vh' }}>
       {/* サイドバー */}
-      <aside style={{
+      <aside className="app-sidebar" style={{
         width: 240,
         background: 'linear-gradient(180deg, #1a3a5c 0%, #0d2137 100%)',
         display: 'flex',
@@ -170,9 +175,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* メインコンテンツ */}
-      <div style={{ flex: 1, marginLeft: 240, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      <div className="app-main-wrapper" style={{ flex: 1, marginLeft: 240, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
         {/* ヘッダー */}
-        <header style={{
+        <header className="app-header" style={{
           background: '#fff',
           borderBottom: '1px solid #e2e8f0',
           padding: '0 2rem',
@@ -194,12 +199,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </header>
 
         {/* ページコンテンツ */}
-        <main style={{ flex: 1, padding: '2rem' }}>
+        <main className="app-main" style={{ flex: 1, padding: '2rem' }}>
           {children}
         </main>
 
         {/* フッター */}
-        <footer style={{
+        <footer className="app-footer" style={{
           background: '#fff',
           borderTop: '1px solid #e2e8f0',
           padding: '0.75rem 2rem',

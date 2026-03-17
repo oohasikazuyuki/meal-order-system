@@ -13,3 +13,4 @@ backend/logs/
 .DS_Store
 frontend/.next
 .idea
+/frontend/node_modules/

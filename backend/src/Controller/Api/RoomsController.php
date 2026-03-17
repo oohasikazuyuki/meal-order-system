@@ -6,11 +6,16 @@ use App\Service\KamahoApiService;
 
 class RoomsController extends AppController
 {
+    public function initialize(): void
+    {
+        parent::initialize();
+        $this->Rooms = $this->fetchTable('Rooms');
+    }
+
     /** GET /api/rooms.json */
     public function index(): void
     {
-        $rooms = $this->fetchTable('Rooms')
-            ->find('all')
+        $rooms = $this->Rooms->find('all')
             ->orderBy(['sort_order' => 'ASC', 'id' => 'ASC'])
             ->toArray();
 
@@ -21,10 +26,9 @@ class RoomsController extends AppController
     /** POST /api/rooms.json */
     public function add(): void
     {
-        $table  = $this->fetchTable('Rooms');
-        $entity = $table->newEntity($this->request->getData());
+        $entity = $this->Rooms->newEntity($this->request->getData());
 
-        if ($table->save($entity)) {
+        if ($this->Rooms->save($entity)) {
             $this->response = $this->response->withStatus(201);
             $this->set(['ok' => true, 'room' => $entity]);
         } else {
@@ -37,9 +41,8 @@ class RoomsController extends AppController
     /** DELETE /api/rooms/:id.json */
     public function delete(int $id): void
     {
-        $table  = $this->fetchTable('Rooms');
-        $entity = $table->get($id);
-        $table->delete($entity);
+        $entity = $this->Rooms->get($id);
+        $this->Rooms->delete($entity);
 
         $this->set(['ok' => true]);
         $this->viewBuilder()->setOption('serialize', ['ok']);
@@ -62,22 +65,21 @@ class RoomsController extends AppController
         }
 
         $kamahoNames = array_keys($allCounts);
-        $table = $this->fetchTable('Rooms');
 
-        $existing = $table->find()->select(['name'])->toArray();
+        $existing = $this->Rooms->find()->select(['name'])->toArray();
         $existingNames = array_map(fn($r) => $r->name, $existing);
 
         $added = [];
         foreach ($kamahoNames as $i => $name) {
             if (!in_array($name, $existingNames, true)) {
-                $entity = $table->newEntity(['name' => $name, 'sort_order' => $i]);
-                if ($table->save($entity)) {
+                $entity = $this->Rooms->newEntity(['name' => $name, 'sort_order' => $i]);
+                if ($this->Rooms->save($entity)) {
                     $added[] = $name;
                 }
             }
         }
 
-        $rooms = $table->find('all')->orderBy(['sort_order' => 'ASC', 'id' => 'ASC'])->toArray();
+        $rooms = $this->Rooms->find('all')->orderBy(['sort_order' => 'ASC', 'id' => 'ASC'])->toArray();
         $this->set(['ok' => true, 'added' => $added, 'rooms' => $rooms, 'kamaho_rooms' => $kamahoNames]);
         $this->viewBuilder()->setOption('serialize', ['ok', 'added', 'rooms', 'kamaho_rooms']);
     }

@@ -1,82 +1,180 @@
 <?php
 namespace App\Controller\Api;
 
+use App\Application\Container\ServiceContainer;
+use App\Application\DTO\CreateOrderDTO;
+use App\Application\DTO\UpdateOrderDTO;
+use App\Application\Exception\ApplicationException;
+use App\Application\Exception\InputValidationException;
+use App\Application\UseCase\CreateOrderUseCase;
+use App\Application\UseCase\DeleteOrderUseCase;
+use App\Application\UseCase\GetOrderListUseCase;
+use App\Application\UseCase\GetOrderSummaryByDateUseCase;
+use App\Application\UseCase\UpdateOrderUseCase;
 use App\Controller\AppController;
-use Cake\Http\Exception\NotFoundException;
+use App\Service\OrderService as LegacyOrderService;
+use App\Domain\Exception\DomainException;
+use App\Domain\Repository\OrderRepositoryInterface;
+use App\Domain\Service\OrderDomainService;
+use App\Domain\ValueObject\OrderId;
 
+/**
+ * 発注管理API
+ * クリーンアーキテクチャー版
+ */
 class OrdersController extends AppController
 {
+    private OrderRepositoryInterface $orderRepository;
+    private OrderDomainService $orderDomainService;
+    private ServiceContainer $container;
+    private LegacyOrderService $legacyOrderService;
+
+    public function initialize(): void
+    {
+        parent::initialize();
+        
+        // DIコンテナから依存性を解決
+        $this->container = ServiceContainer::getInstance();
+        $this->orderRepository = $this->container->get(OrderRepositoryInterface::class);
+        $this->orderDomainService = new OrderDomainService($this->orderRepository);
+        $this->legacyOrderService = new LegacyOrderService();
+    }
 
     /** GET /api/orders - 発注一覧 */
     public function index(): void
     {
-        $orders = $this->Orders->find('all')
-            ->contain(['Users', 'Menus'])
-            ->orderBy(['Orders.order_date' => 'DESC'])
-            ->toList();
-
-        $this->set(compact('orders'));
-        $this->viewBuilder()->setOption('serialize', ['orders']);
+        try {
+            $this->set([
+                'success' => true,
+                'orders' => $this->legacyOrderService->getOrderList()
+            ]);
+            $this->viewBuilder()->setOption('serialize', ['success', 'orders']);
+        } catch (\Exception $e) {
+            $this->handleError($e, 500);
+        }
     }
 
     /** GET /api/orders/:id - 発注詳細 */
     public function view(int $id): void
     {
-        $order = $this->Orders->get($id, contain: ['Users', 'Menus']);
-        $this->set(compact('order'));
-        $this->viewBuilder()->setOption('serialize', ['order']);
+        try {
+            $order = $this->legacyOrderService->getOrderById($id);
+            if (!$order) throw new DomainException('発注が見つかりません', 404);
+
+            $this->set([
+                'success' => true,
+                'order' => $order
+            ]);
+            $this->viewBuilder()->setOption('serialize', ['success', 'order']);
+        } catch (DomainException $e) {
+            $this->handleError($e, (int)$e->getCode());
+        } catch (\Exception $e) {
+            $this->handleError($e, 500);
+        }
     }
 
     /** POST /api/orders - 発注登録 */
     public function add(): void
     {
-        $order = $this->Orders->newEmptyEntity();
-        $order = $this->Orders->patchEntity($order, $this->request->getData());
+        try {
+            $dto = new CreateOrderDTO($this->request->getData());
+            
+            $useCase = new CreateOrderUseCase($this->orderRepository, $this->orderDomainService);
+            $order = $useCase->execute($dto);
 
-        if ($this->Orders->save($order)) {
             $this->response = $this->response->withStatus(201);
-            $this->set(['success' => true, 'order' => $order]);
-        } else {
-            $this->response = $this->response->withStatus(400);
-            $this->set(['success' => false, 'errors' => $order->getErrors()]);
+            $this->set([
+                'success' => true,
+                'order' => $order->toArray()
+            ]);
+            $this->viewBuilder()->setOption('serialize', ['success', 'order']);
+        } catch (InputValidationException $e) {
+            $this->handleValidationError($e, 400);
+        } catch (DomainException $e) {
+            $this->handleError($e, (int)$e->getCode());
+        } catch (ApplicationException $e) {
+            $this->handleError($e, (int)$e->getCode());
+        } catch (\Exception $e) {
+            $this->handleError($e, 500);
         }
-        $this->viewBuilder()->setOption('serialize', ['success', 'order', 'errors']);
     }
 
     /** PUT /api/orders/:id - 発注更新 */
     public function edit(int $id): void
     {
-        $order = $this->Orders->get($id);
-        $order = $this->Orders->patchEntity($order, $this->request->getData());
-
-        if ($this->Orders->save($order)) {
-            $this->set(['success' => true, 'order' => $order]);
-        } else {
-            $this->response = $this->response->withStatus(400);
-            $this->set(['success' => false, 'errors' => $order->getErrors()]);
+        try {
+            $result = $this->legacyOrderService->updateOrder($id, $this->request->getData());
+            if (!$result['success']) {
+                $this->response = $this->response->withStatus(400);
+                $this->set(['success' => false, 'errors' => $result['errors']]);
+                $this->viewBuilder()->setOption('serialize', ['success', 'errors']);
+                return;
+            }
+            $this->set(['success' => true, 'order' => $result['entity']]);
+            $this->viewBuilder()->setOption('serialize', ['success', 'order']);
+        } catch (\Exception $e) {
+            $this->handleError($e, 500);
         }
-        $this->viewBuilder()->setOption('serialize', ['success', 'order', 'errors']);
     }
 
     /** DELETE /api/orders/:id - 発注削除 */
     public function delete(int $id): void
     {
-        $order = $this->Orders->get($id);
-        $this->Orders->delete($order);
-        $this->set(['success' => true]);
-        $this->viewBuilder()->setOption('serialize', ['success']);
+        try {
+            $this->legacyOrderService->deleteOrder($id);
+            $this->set(['success' => true]);
+            $this->viewBuilder()->setOption('serialize', ['success']);
+        } catch (\Exception $e) {
+            $this->handleError($e, 500);
+        }
     }
 
-    /** GET /api/orders/summary - 日別集計 */
+    /** GET /api/orders/summary - 日別発注サマリー */
     public function summary(): void
     {
-        $date = $this->request->getQuery('date', date('Y-m-d'));
-        $orders = $this->Orders->find('all')
-            ->contain(['Menus'])
-            ->where(['Orders.order_date' => $date, 'Orders.status !=' => 'cancelled'])
-            ->toList();
+        try {
+            $date = $this->request->getQuery('date', date('Y-m-d'));
 
-        $this->set(compact('orders'));
-        $this->viewBuilder()->setOption('serialize', ['orders']);
+            $this->set([
+                'success' => true,
+                'orders' => $this->legacyOrderService->getOrderSummaryByDate($date)
+            ]);
+            $this->viewBuilder()->setOption('serialize', ['success', 'orders']);
+        } catch (\InvalidArgumentException $e) {
+            $this->handleError($e, 400);
+        } catch (\Exception $e) {
+            $this->handleError($e, 500);
+        }
+    }
+
+    /**
+     * バリデーションエラー処理
+     */
+    private function handleValidationError(InputValidationException $e, int $statusCode): void
+    {
+        $this->response = $this->response->withStatus($statusCode);
+        $this->set([
+            'success' => false,
+            'message' => $e->getMessage(),
+            'errors' => $e->getErrors()
+        ]);
+        $this->viewBuilder()->setOption('serialize', ['success', 'message', 'errors']);
+    }
+
+    /**
+     * エラーハンドリング
+     */
+    private function handleError(\Exception $e, int $statusCode): void
+    {
+        $this->response = $this->response->withStatus($statusCode);
+        $this->set([
+            'success' => false,
+            'message' => $e->getMessage(),
+            'error' => [
+                'type' => (new \ReflectionClass($e))->getShortName(),
+                'code' => $e->getCode()
+            ]
+        ]);
+        $this->viewBuilder()->setOption('serialize', ['success', 'message', 'error']);
     }
 }

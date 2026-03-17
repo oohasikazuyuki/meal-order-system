@@ -18,6 +18,12 @@ use App\Controller\AppController;
  */
 class RoomGramSettingsController extends AppController
 {
+    public function initialize(): void
+    {
+        parent::initialize();
+        $this->RoomGramSettings = $this->fetchTable('RoomGramSettings');
+    }
+
     /** POST /api/room-gram-settings/upsert.json - room_id の全meal_typeをupsert */
     public function upsert(): void
     {
@@ -32,7 +38,6 @@ class RoomGramSettingsController extends AppController
             return;
         }
 
-        $table  = $this->fetchTable('RoomGramSettings');
         $saved  = [];
         $errors = [];
 
@@ -42,19 +47,19 @@ class RoomGramSettingsController extends AppController
                 continue;
             }
 
-            $existing = $table->find()
+            $existing = $this->RoomGramSettings->find()
                 ->where(['room_id' => $roomId, 'meal_type' => $mealType])
                 ->first();
 
             $entity = $existing
-                ? $table->patchEntity($existing, ['grams_per_person' => $item['grams_per_person'] ?? 0])
-                : $table->newEntity([
+                ? $this->RoomGramSettings->patchEntity($existing, ['grams_per_person' => $item['grams_per_person'] ?? 0])
+                : $this->RoomGramSettings->newEntity([
                     'room_id'          => $roomId,
                     'meal_type'        => $mealType,
                     'grams_per_person' => $item['grams_per_person'] ?? 0,
                 ]);
 
-            if ($table->save($entity)) {
+            if ($this->RoomGramSettings->save($entity)) {
                 $saved[] = $entity;
             } else {
                 $errors[$mealType] = $entity->getErrors();

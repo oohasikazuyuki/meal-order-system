@@ -12,6 +12,12 @@ use App\Controller\AppController;
  */
 class OrderQuantitiesController extends AppController
 {
+    public function initialize(): void
+    {
+        parent::initialize();
+        $this->DailyOrderQuantities = $this->fetchTable('DailyOrderQuantities');
+    }
+
     /**
      * GET /api/order-quantities.json?date=YYYY-MM-DD
      * 指定日の全食事種別の発注数量を返す
@@ -19,9 +25,8 @@ class OrderQuantitiesController extends AppController
     public function index(): void
     {
         $date = $this->request->getQuery('date', date('Y-m-d'));
-        $table = $this->fetchTable('DailyOrderQuantities');
 
-        $rows = $table->find('all')
+        $rows = $this->DailyOrderQuantities->find('all')
             ->where(['order_date' => $date])
             ->orderBy(['meal_type' => 'ASC'])
             ->toArray();
@@ -64,7 +69,6 @@ class OrderQuantitiesController extends AppController
             return;
         }
 
-        $table  = $this->fetchTable('DailyOrderQuantities');
         $saved  = [];
         $errors = [];
 
@@ -75,15 +79,15 @@ class OrderQuantitiesController extends AppController
             }
 
             // upsert: 既存レコードを取得、なければ新規作成
-            $existing = $table->find()
+            $existing = $this->DailyOrderQuantities->find()
                 ->where(['order_date' => $orderDate, 'meal_type' => $mealType])
                 ->first();
 
             $entity = $existing
-                ? $table->patchEntity($existing, $item)
-                : $table->newEntity(array_merge($item, ['order_date' => $orderDate]));
+                ? $this->DailyOrderQuantities->patchEntity($existing, $item)
+                : $this->DailyOrderQuantities->newEntity(array_merge($item, ['order_date' => $orderDate]));
 
-            if ($table->save($entity)) {
+            if ($this->DailyOrderQuantities->save($entity)) {
                 $saved[] = $entity;
             } else {
                 $errors[$mealType] = $entity->getErrors();
@@ -106,9 +110,8 @@ class OrderQuantitiesController extends AppController
      */
     public function delete(int $id): void
     {
-        $table  = $this->fetchTable('DailyOrderQuantities');
-        $entity = $table->get($id);
-        $table->delete($entity);
+        $entity = $this->DailyOrderQuantities->get($id);
+        $this->DailyOrderQuantities->delete($entity);
 
         $this->set(['ok' => true]);
         $this->viewBuilder()->setOption('serialize', ['ok']);

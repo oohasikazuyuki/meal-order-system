@@ -31,11 +31,13 @@ export default function UsersPage() {
 
   const handleDelete = async (user: UserRecord) => {
     if (!confirm(`「${user.name}」を削除しますか？`)) return
+    const prevUsers = users
+    setUsers(prev => prev.filter(u => u.id !== user.id))
     try {
       await deleteUser(user.id)
       setSuccessMsg(`「${user.name}」を削除しました`)
-      load()
     } catch {
+      setUsers(prevUsers)
       setError('削除に失敗しました')
     }
   }
@@ -185,7 +187,12 @@ function UserForm({ initial, blocks, onSuccess, onCancel }: {
     setSaving(true)
     setError(null)
     try {
-      const data: UserInput = { name: name.trim(), login_id: loginId.trim(), role, block_id: role === 'user' ? blockId : null }
+      const data: UserInput = { 
+        name: name.trim(), 
+        login_id: loginId.trim(), 
+        role, 
+        block_id: role === 'user' ? (blockId ?? null) : null 
+      }
       if (password) data.password = password
 
       if (isEdit && initial) {
@@ -195,8 +202,9 @@ function UserForm({ initial, blocks, onSuccess, onCancel }: {
         await createUser(data)
         onSuccess(`「${name}」を追加しました`)
       }
-    } catch {
-      setError('保存に失敗しました')
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : '保存に失敗しました'
+      setError(errorMsg)
     } finally {
       setSaving(false)
     }

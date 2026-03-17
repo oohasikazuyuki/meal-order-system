@@ -11,6 +11,12 @@ use App\Controller\AppController;
  */
 class MenuIngredientsController extends AppController
 {
+    public function initialize(): void
+    {
+        parent::initialize();
+        $this->MenuIngredients = $this->fetchTable('MenuIngredients');
+    }
+
     /** GET /api/menu-ingredients.json?menu_master_id=:id */
     public function index(): void
     {
@@ -22,8 +28,7 @@ class MenuIngredientsController extends AppController
             return;
         }
 
-        $ingredients = $this->fetchTable('MenuIngredients')
-            ->find()
+        $ingredients = $this->MenuIngredients->find()
             ->where(['menu_master_id' => (int)$masterId])
             ->orderBy(['sort_order' => 'ASC', 'id' => 'ASC'])
             ->toArray();
@@ -49,20 +54,25 @@ class MenuIngredientsController extends AppController
             return;
         }
 
-        $table = $this->fetchTable('MenuIngredients');
-        $table->deleteAll(['menu_master_id' => $masterId]);
+        $this->MenuIngredients->deleteAll(['menu_master_id' => $masterId]);
 
         $saved = [];
         foreach ($items as $i => $item) {
             if (empty(trim((string)($item['name'] ?? '')))) continue;
-            $entity = $table->newEntity([
-                'menu_master_id' => $masterId,
-                'name'           => trim((string)($item['name'] ?? '')),
-                'amount'         => (float)($item['amount'] ?? 0),
-                'unit'           => trim((string)($item['unit'] ?? 'g')),
-                'sort_order'     => $i,
+            $supplierId = isset($item['supplier_id']) && $item['supplier_id'] !== '' && $item['supplier_id'] !== null
+                ? (int)$item['supplier_id'] : null;
+            $ppu = isset($item['persons_per_unit']) && $item['persons_per_unit'] !== '' && $item['persons_per_unit'] !== null
+                ? (int)$item['persons_per_unit'] : null;
+            $entity = $this->MenuIngredients->newEntity([
+                'menu_master_id'  => $masterId,
+                'name'            => trim((string)($item['name'] ?? '')),
+                'amount'          => (float)($item['amount'] ?? 0),
+                'unit'            => trim((string)($item['unit'] ?? 'g')),
+                'persons_per_unit'=> $ppu,
+                'supplier_id'     => $supplierId,
+                'sort_order'      => $i,
             ]);
-            if ($table->save($entity)) $saved[] = $entity;
+            if ($this->MenuIngredients->save($entity)) $saved[] = $entity;
         }
 
         $this->set(['ok' => true, 'ingredients' => $saved]);
