@@ -9,6 +9,8 @@ const nextConfig: NextConfig = {
   images: {
     formats: ['image/webp'],
   },
+  // ESM パッケージのトランスパイル（react-pdf v10 はピュア ESM）
+  transpilePackages: ['react-pdf', 'pdfjs-dist'],
   // プロダクションビルドで未使用コードを削除
   experimental: {
     optimizePackageImports: ['axios'],
