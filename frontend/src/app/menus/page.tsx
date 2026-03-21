@@ -270,12 +270,18 @@ export default function MenusPage() {
         overwrite: copyOverwrite,
         block_id: isAdmin ? null : userBlockId,
       })
-      await load(year, month)
       const d = res.data
+      if (!d.ok) {
+        alert(`周期ルーティン登録に失敗しました\n${d.message ?? ''}`)
+        return
+      }
+      await load(year, month)
       alert(`周期ルーティン登録が完了しました\nコピー件数: ${d.copied}件\nスキップ: ${d.skipped}件\n繰り返し回数: ${d.cycles}回\n期間: ${d.target_start}〜${d.target_end}`)
       setCopyOpen(false)
-    } catch {
-      alert('周期ルーティン登録に失敗しました')
+    } catch (e) {
+      console.error('[scheduleRoutine] error:', e)
+      const msg = e instanceof Error ? e.message : String(e)
+      alert(`周期ルーティン登録に失敗しました\n${msg}`)
     } finally {
       setCopyRunning(false)
     }

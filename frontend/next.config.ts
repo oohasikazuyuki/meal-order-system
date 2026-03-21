@@ -9,6 +9,11 @@ const nextConfig: NextConfig = {
   images: {
     formats: ['image/webp'],
   },
+  // pdfjs-dist が canvas (Node.js ネイティブ) を要求するのを抑制
+  webpack: (config) => {
+    config.resolve.alias.canvas = false
+    return config
+  },
   // プロダクションビルドで未使用コードを削除
   experimental: {
     optimizePackageImports: ['axios'],
