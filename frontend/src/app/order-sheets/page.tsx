@@ -1,11 +1,13 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import dynamic from 'next/dynamic'
 import {
   fetchOrderSheetPreview, fetchOrderSheetPdf, fetchInventoryPreview,
   type OrderSheetPreviewResponse, type InventoryPreviewResponse,
 } from '../_lib/api/client'
-import PdfViewerModal from '../_components/PdfViewerModal'
+
+const PdfViewerModal = dynamic(() => import('../_components/PdfViewerModal'), { ssr: false })
 
 /** タイムゾーン安全：Date → 'YYYY-MM-DD' */
 function toDateStr(d: Date): string {
