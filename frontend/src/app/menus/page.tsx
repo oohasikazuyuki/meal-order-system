@@ -715,10 +715,10 @@ function buildSelections(menus: MenuItem[], blocks: Block[], masters: MenuMaster
     const row = {} as Record<MealType, number[]>
     for (const mt of MEAL_TYPES) {
       const dayMenus = menus.filter(m => m.meal_type === mt && m.block_id === b.id)
-      row[mt] = dayMenus
+      row[mt] = [...new Set(dayMenus
         .filter(m => !m.name.startsWith('外食'))
         .map(m => masters.find(ma => ma.name === m.name && (ma.block_id === null || ma.block_id === b.id))?.id)
-        .filter((id): id is number => id !== undefined)
+        .filter((id): id is number => id !== undefined))]
     }
     sel[b.id] = row
   }
