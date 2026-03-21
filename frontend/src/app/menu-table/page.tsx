@@ -424,10 +424,9 @@ function MealBlock({
                   {viewType === 'staff' && menu.ingredients.map((ing, ii) => (
                     <div key={ii} style={{
                       display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-                      fontSize: '0.75rem', color: '#6b7280',
-                      paddingLeft: '0.75rem',
+                      fontSize: '0.82rem', color: '#6b7280',
                       borderBottom: ii < menu.ingredients.length - 1 ? '1px dashed #f3f4f6' : 'none',
-                      padding: '0.08rem 0 0.08rem 0.75rem',
+                      padding: '0.1rem 0 0.1rem 0.75rem',
                     }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '0.25rem', flex: 1 }}>
                         {ing.name}
@@ -440,7 +439,7 @@ function MealBlock({
                         return (
                           <span style={{
                             background: sc.bg, color: sc.color,
-                            padding: '0 0.3rem', borderRadius: 3, fontSize: '0.7rem', fontWeight: 700,
+                            padding: '0.05rem 0.4rem', borderRadius: 3, fontSize: '0.8rem', fontWeight: 700,
                             flexShrink: 0,
                           }}>
                             {ing.supplier_code}

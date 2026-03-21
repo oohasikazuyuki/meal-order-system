@@ -8,6 +8,7 @@ import {
 } from '../_lib/api/client'
 
 const UNIT_OPTIONS = ['g', 'kg', 'ml', 'L', '個', '枚', '本', '袋', '缶', '束', '合', '大さじ', '小さじ', '切れ', '適量']
+const DISH_CATEGORY_PRESETS = ['主食', '副菜', '主菜', '汁物', '丼物', 'デザート', 'おやつ']
 const FRACTION_OPTIONS: Array<{ label: string; value: number }> = [
   { label: '1/8', value: 0.125 },
   { label: '1/6', value: 1 / 6 },
@@ -62,6 +63,7 @@ export default function MenuMasterPage() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [filterBlockId, setFilterBlockId] = useState<number | null | 'all'>('all')
+  const [filterCategory, setFilterCategory] = useState<string>('all')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -107,10 +109,20 @@ export default function MenuMasterPage() {
   const filtered = masters.filter(m => {
     const matchText = m.name.toLowerCase().includes(searchQuery.toLowerCase())
     if (!matchText) return false
-    if (filterBlockId === 'all') return true
-    if (filterBlockId === null) return m.block_id === null
-    return m.block_id === filterBlockId
+    if (filterBlockId !== 'all') {
+      if (filterBlockId === null && m.block_id !== null) return false
+      if (filterBlockId !== null && m.block_id !== filterBlockId) return false
+    }
+    if (filterCategory !== 'all') {
+      if (filterCategory === '__none') return !m.dish_category
+      if (m.dish_category !== filterCategory) return false
+    }
+    return true
   })
+
+  // カテゴリ一覧（既存データ＋プリセット）
+  const existingCategories = Array.from(new Set(masters.map(m => m.dish_category).filter(Boolean))) as string[]
+  const allCategories = Array.from(new Set([...DISH_CATEGORY_PRESETS, ...existingCategories]))
 
   const blockName = (id: number | null) => {
     if (id === null) return null
@@ -136,6 +148,20 @@ export default function MenuMasterPage() {
             outline: 'none', color: '#1a202c',
           }}
         />
+        {/* カテゴリフィルター */}
+        <select
+          value={filterCategory}
+          onChange={e => setFilterCategory(e.target.value)}
+          style={{
+            padding: '0.5rem 0.75rem', fontSize: '0.88rem',
+            border: '2px solid #e5e7eb', borderRadius: 8, outline: 'none',
+            background: '#fff', color: '#374151',
+          }}
+        >
+          <option value="all">全カテゴリ</option>
+          <option value="__none">未分類</option>
+          {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
         {/* ブロックフィルター */}
         <select
           value={filterBlockId === null ? '__common' : filterBlockId === 'all' ? 'all' : String(filterBlockId)}
@@ -237,8 +263,16 @@ function MenuMasterCard({ master, blockName, onEdit, onDelete }: {
 
         {/* 情報 */}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: '1rem', color: '#1a202c', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{ fontWeight: 700, fontSize: '1rem', color: '#1a202c', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
             {master.name}
+            {master.dish_category && (
+              <span style={{
+                fontSize: '0.7rem', padding: '0.1rem 0.45rem', borderRadius: 4,
+                background: '#fef9c3', color: '#854d0e', fontWeight: 600, border: '1px solid #fde68a',
+              }}>
+                {master.dish_category}
+              </span>
+            )}
             {blockName ? (
               <span style={{
                 fontSize: '0.7rem', padding: '0.1rem 0.45rem', borderRadius: 4,
@@ -321,6 +355,7 @@ function MenuMasterForm({ initial, blocks, suppliers, onSuccess, onCancel }: {
 }) {
   const isEdit = !!initial
   const [name, setName] = useState(initial?.name ?? '')
+  const [dishCategory, setDishCategory] = useState(initial?.dish_category ?? '')
   const [blockId, setBlockId] = useState<number | null>(initial?.block_id ?? null)
   const [grams, setGrams] = useState(String(initial?.grams_per_person ?? ''))
   const [memo, setMemo] = useState(initial?.memo ?? '')
@@ -400,6 +435,7 @@ function MenuMasterForm({ initial, blocks, suppliers, onSuccess, onCancel }: {
     try {
       const data: MenuMasterInput = {
         name: name.trim(),
+        dish_category: dishCategory.trim() || null,
         block_id: blockId,
         grams_per_person: parseFloat(grams) || 0,
         memo: memo.trim(),
@@ -441,7 +477,7 @@ function MenuMasterForm({ initial, blocks, suppliers, onSuccess, onCancel }: {
 
       <form onSubmit={handleSubmit}>
         {/* 基本情報 */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 120px 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 120px 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
           <div>
             <label style={labelStyle}>メニュー名 <span style={{ color: '#dc2626' }}>*</span></label>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -473,6 +509,39 @@ function MenuMasterForm({ initial, blocks, suppliers, onSuccess, onCancel }: {
                   {aiLoading ? '生成中...' : 'AI下書き'}
                 </button>
               )}
+            </div>
+          </div>
+          <div>
+            <label style={labelStyle}>料理区分</label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                {DISH_CATEGORY_PRESETS.map(cat => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setDishCategory(dishCategory === cat ? '' : cat)}
+                    style={{
+                      padding: '0.2rem 0.55rem',
+                      fontSize: '0.78rem',
+                      fontWeight: 600,
+                      borderRadius: 5,
+                      cursor: 'pointer',
+                      border: dishCategory === cat ? '2px solid #ca8a04' : '1px solid #e5e7eb',
+                      background: dishCategory === cat ? '#fef9c3' : '#f9fafb',
+                      color: dishCategory === cat ? '#854d0e' : '#6b7280',
+                    }}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="text"
+                value={dishCategory}
+                onChange={e => setDishCategory(e.target.value)}
+                placeholder="カスタム入力（例：麺類）"
+                style={{ ...formInput, fontSize: '0.85rem', padding: '0.4rem 0.6rem' }}
+              />
             </div>
           </div>
           <div>

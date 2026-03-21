@@ -74,8 +74,10 @@ class MenuMastersController extends AppController
         $data  = $this->request->getData();
 
         $blockId = isset($data['block_id']) && $data['block_id'] !== '' ? (int)$data['block_id'] : null;
+        $dishCategory = isset($data['dish_category']) && $data['dish_category'] !== '' ? trim((string)$data['dish_category']) : null;
         $entity = $this->MenuMasters->newEntity([
             'name'             => trim((string)($data['name'] ?? '')),
+            'dish_category'    => $dishCategory,
             'block_id'         => $blockId,
             'grams_per_person' => (float)($data['grams_per_person'] ?? 0),
             'memo'             => trim((string)($data['memo'] ?? '')),
@@ -105,8 +107,12 @@ class MenuMastersController extends AppController
         $blockId = array_key_exists('block_id', $data)
             ? (($data['block_id'] !== '' && $data['block_id'] !== null) ? (int)$data['block_id'] : null)
             : $entity->block_id;
+        $dishCategory = array_key_exists('dish_category', $data)
+            ? (($data['dish_category'] !== '' && $data['dish_category'] !== null) ? trim((string)$data['dish_category']) : null)
+            : $entity->dish_category;
         $this->MenuMasters->patchEntity($entity, [
             'name'             => trim((string)($data['name'] ?? $entity->name)),
+            'dish_category'    => $dishCategory,
             'block_id'         => $blockId,
             'grams_per_person' => (float)($data['grams_per_person'] ?? $entity->grams_per_person),
             'memo'             => trim((string)($data['memo'] ?? $entity->memo)),

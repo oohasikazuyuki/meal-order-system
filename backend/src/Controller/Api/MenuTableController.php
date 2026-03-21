@@ -641,11 +641,12 @@ class MenuTableController extends AppController
         $sheet->getCell('Y' . $row)->setValueExplicit('納品日', $st);
         $sheet->getCell('Z' . $row)->setValueExplicit('', $st);
         $sheet->getCell('AA' . $row)->setValueExplicit('', $st);
-        $sheet->getStyle("V{$row}:AA{$row}")->getFont()->setBold(false);
+        $sheet->getStyle("V{$row}:AA{$row}")->getFont()->setBold(true);
         $sheet->getStyle("V{$row}:AA{$row}")->getAlignment()
             ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER)
             ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
-        $sheet->getStyle("V{$row}:AA{$row}")->getFont()->setSize(9);
+        $sheet->getStyle("V{$row}:AA{$row}")->getFont()->setSize(11);
+        $sheet->getRowDimension($row)->setRowHeight(18);
         $row++;
 
         foreach ($suppliers as $sup) {
@@ -696,7 +697,7 @@ class MenuTableController extends AppController
             }
 
             $sheet->getStyle("V{$row}:AA{$endRow}")->getFont()->setBold(false);
-            $sheet->getStyle("V{$row}:AA{$endRow}")->getFont()->setSize(9);
+            $sheet->getStyle("V{$row}:AA{$endRow}")->getFont()->setSize(11);
             $sheet->getStyle("V{$row}:AA{$endRow}")->getAlignment()
                 ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_TOP)
                 ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_LEFT)
@@ -704,7 +705,7 @@ class MenuTableController extends AppController
 
             $lineCount = max(count($uniqueOrderDates), 1);
             for ($r = $row; $r <= $endRow; $r++) {
-                $sheet->getRowDimension($r)->setRowHeight(16 * $lineCount);
+                $sheet->getRowDimension($r)->setRowHeight(20 * $lineCount);
             }
 
             $fillColor = $this->memoSupplierColor((string)($sup['code'] ?? ''), (string)$sup['name']);

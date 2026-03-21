@@ -348,6 +348,9 @@ class AiController extends AppController
         if ($provider === 'openrouter') {
             return $this->callOpenRouter($prompt, $timeoutSec, $options);
         }
+        if ($provider === 'groq') {
+            return $this->callGroq($prompt, $timeoutSec, $options);
+        }
         return $this->callOllamaLocal($prompt, $timeoutSec, $options);
     }
 
@@ -453,6 +456,66 @@ class AiController extends AppController
 
             $bodySnippet = is_string($body) ? mb_substr($body, 0, 240) : '';
             error_log("OpenRouter call failed: attempt={$attempt} status={$status} errno={$errno} err={$error} body={$bodySnippet}");
+            if ($attempt === 0) {
+                usleep(300000);
+            }
+        }
+
+        return ['ok' => false, 'text' => ''];
+    }
+
+    private function callGroq(string $prompt, int $timeoutSec = 90, array $options = []): array
+    {
+        $apiKey = trim((string)(getenv('GROQ_API_KEY') ?: ''));
+        if ($apiKey === '') {
+            error_log('Groq call failed: missing GROQ_API_KEY');
+            return ['ok' => false, 'text' => ''];
+        }
+
+        $baseUrl = 'https://api.groq.com/openai/v1';
+        $model = (string)(getenv('GROQ_MODEL') ?: 'llama-3.1-8b-instant');
+        $url = $baseUrl . '/chat/completions';
+
+        $maxTokens = isset($options['num_predict']) ? max(64, (int)$options['num_predict']) : 256;
+        $temperature = isset($options['temperature']) ? (float)$options['temperature'] : 0.4;
+        $payload = [
+            'model' => $model,
+            'messages' => [
+                ['role' => 'user', 'content' => $prompt],
+            ],
+            'temperature' => $temperature,
+            'max_tokens' => $maxTokens,
+        ];
+
+        for ($attempt = 0; $attempt < 2; $attempt++) {
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_POST => true,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_HTTPHEADER => [
+                    'Authorization: Bearer ' . $apiKey,
+                    'Content-Type: application/json',
+                ],
+                CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE),
+                CURLOPT_TIMEOUT => $timeoutSec,
+                CURLOPT_CONNECTTIMEOUT => 10,
+            ]);
+            $body = curl_exec($ch);
+            $errno = curl_errno($ch);
+            $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $error = curl_error($ch);
+            curl_close($ch);
+
+            if ($errno === 0 && $status >= 200 && $status < 300 && is_string($body)) {
+                $decoded = json_decode($body, true);
+                $content = (string)($decoded['choices'][0]['message']['content'] ?? '');
+                if ($content !== '') {
+                    return ['ok' => true, 'text' => $content];
+                }
+            }
+
+            $bodySnippet = is_string($body) ? mb_substr($body, 0, 240) : '';
+            error_log("Groq call failed: attempt={$attempt} status={$status} errno={$errno} err={$error} body={$bodySnippet}");
             if ($attempt === 0) {
                 usleep(300000);
             }

@@ -378,6 +378,7 @@ export interface MenuIngredientInput {
 export interface MenuMaster {
   id: number;
   name: string;
+  dish_category: string | null;
   block_id: number | null;
   grams_per_person: number;
   memo: string;
@@ -386,6 +387,7 @@ export interface MenuMaster {
 
 export interface MenuMasterInput {
   name: string;
+  dish_category?: string | null;
   block_id?: number | null;
   grams_per_person?: number;
   memo?: string;
