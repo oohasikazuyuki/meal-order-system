@@ -5,6 +5,7 @@ import {
   fetchOrderSheetPreview, fetchOrderSheetPdf, fetchInventoryPreview,
   type OrderSheetPreviewResponse, type InventoryPreviewResponse,
 } from '../_lib/api/client'
+import PdfViewerModal from '../_components/PdfViewerModal'
 
 /** タイムゾーン安全：Date → 'YYYY-MM-DD' */
 function toDateStr(d: Date): string {
@@ -41,6 +42,7 @@ function isFutureOrToday(dateStr: string): boolean {
 interface PdfModal {
   url: string
   supplierName: string
+  fileName: string
 }
 
 export default function OrderSheetsPage() {
@@ -88,7 +90,7 @@ export default function OrderSheetsPage() {
       const res = await fetchOrderSheetPdf(weekStart, supplierId, {})
       const blob = new Blob([res.data], { type: 'application/pdf' })
       const url = URL.createObjectURL(blob)
-      setPdfModal({ url, supplierName })
+      setPdfModal({ url, supplierName, fileName: `${supplierName}_${weekStart}週.pdf` })
     } catch {
       setError(`${supplierName}の発注書PDF生成に失敗しました`)
     } finally {
@@ -105,64 +107,12 @@ export default function OrderSheetsPage() {
     <div>
       {/* PDF モーダル */}
       {pdfModal && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 1000,
-          background: 'rgba(0,0,0,0.75)',
-          display: 'flex', flexDirection: 'column',
-        }}>
-          {/* モーダルヘッダー */}
-          <div style={{
-            background: '#1a3a5c', padding: '0.75rem 1.25rem',
-            display: 'flex', alignItems: 'center', gap: '1rem',
-            flexShrink: 0,
-          }}>
-            <span style={{ color: '#fff', fontWeight: 700, fontSize: '1rem', flex: 1 }}>
-              📄 {pdfModal.supplierName} 発注書プレビュー
-            </span>
-            <a
-              href={pdfModal.url}
-              download={`${pdfModal.supplierName}_${weekStart}週.pdf`}
-              style={{
-                padding: '0.45rem 1rem', background: '#059669', color: '#fff',
-                borderRadius: 8, fontSize: '0.85rem', fontWeight: 600,
-                textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.4rem',
-              }}
-            >
-              💾 ダウンロード
-            </a>
-            <button
-              onClick={() => {
-                const iframe = document.getElementById('pdf-preview-frame') as HTMLIFrameElement
-                iframe?.contentWindow?.print()
-              }}
-              style={{
-                padding: '0.45rem 1rem', background: 'rgba(255,255,255,0.15)', color: '#fff',
-                border: '1px solid rgba(255,255,255,0.3)', borderRadius: 8,
-                fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer',
-              }}
-            >
-              🖨 印刷
-            </button>
-            <button
-              onClick={closePdfModal}
-              style={{
-                padding: '0.45rem 1rem', background: '#dc2626', color: '#fff',
-                border: 'none', borderRadius: 8,
-                fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer',
-              }}
-            >
-              ✕ 閉じる
-            </button>
-          </div>
-
-          {/* PDF iframe */}
-          <iframe
-            id="pdf-preview-frame"
-            src={pdfModal.url}
-            style={{ flex: 1, border: 'none', background: '#525659' }}
-            title="発注書プレビュー"
-          />
-        </div>
+        <PdfViewerModal
+          url={pdfModal.url}
+          fileName={pdfModal.fileName}
+          title={`${pdfModal.supplierName} 発注書プレビュー`}
+          onClose={closePdfModal}
+        />
       )}
 
       {/* 週選択バー */}
