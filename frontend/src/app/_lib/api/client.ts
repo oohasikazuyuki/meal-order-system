@@ -123,6 +123,11 @@ export const copyMenusRoutine = async (data: MenuRoutineCopyInput) => {
   clearCache();
   return res;
 };
+export const scheduleMenusRoutine = async (data: MenuScheduleRoutineInput) => {
+  const res = await client.post<MenuScheduleRoutineResponse>('/menus/schedule-routine', data);
+  clearCache();
+  return res;
+};
 
 // --- Menu Ingredients ---
 export const fetchMenuIngredients = (menuMasterId: number) =>
@@ -278,6 +283,31 @@ export interface MenuRoutineCopyInput {
   include_birthday_menu?: boolean;
   replace_existing?: boolean;
   block_id?: number | null;
+}
+
+export interface MenuScheduleRoutineInput {
+  source_start: string;
+  source_end: string;
+  target_start: string;
+  target_end: string;
+  cycle_months?: number;
+  include_birthday_menu?: boolean;
+  overwrite?: boolean;
+  block_id?: number | null;
+}
+
+export interface MenuScheduleRoutineResponse {
+  ok: boolean;
+  source_start: string;
+  source_end: string;
+  target_start: string;
+  target_end: string;
+  cycle_months: number;
+  cycles: number;
+  deleted: number;
+  copied: number;
+  skipped: number;
+  message?: string;
 }
 
 export interface MenuRoutineCopyResponse {

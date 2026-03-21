@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   fetchMenusByMonth, saveMenu, deleteMenu,
-  fetchMenuMasters, fetchBlocks, fetchMenuTablePdf, suggestMenuByAi, copyMenusRoutine,
+  fetchMenuMasters, fetchBlocks, fetchMenuTablePdf, suggestMenuByAi, scheduleMenusRoutine,
   MEAL_TYPE_LABELS, type MealType, type MenuItem, type MenuMaster, type Block, type AiMenuSuggestResponse,
 } from '../_lib/api/client'
 import { getStoredUser } from '../_lib/auth'
@@ -72,7 +72,10 @@ export default function MenusPage() {
   const [copyRunning, setCopyRunning] = useState(false)
   const [copySourceMonth, setCopySourceMonth] = useState(shiftMonth(today, 0))
   const [copyTargetMonth, setCopyTargetMonth] = useState(shiftMonth(today, 2))
+  const [copyTargetEndMonth, setCopyTargetEndMonth] = useState(shiftMonth(today, 4))
+  const [copyCycleMonths, setCopyCycleMonths] = useState(2)
   const [copyIncludeBirthday, setCopyIncludeBirthday] = useState(true)
+  const [copyOverwrite, setCopyOverwrite] = useState(false)
   const [weekDl, setWeekDl] = useState<Record<string, 'staff' | 'children' | null>>({})
 
   const user = getStoredUser()
@@ -239,30 +242,46 @@ export default function MenusPage() {
       alert('担当ブロック未設定のためコピーできません')
       return
     }
-    if (!copySourceMonth || !copyTargetMonth) {
-      alert('コピー元月とコピー先月を選択してください')
+    if (!copySourceMonth || !copyTargetMonth || !copyTargetEndMonth) {
+      alert('コピー元月・コピー先開始月・コピー先終了月を選択してください')
       return
     }
-    if (copySourceMonth === copyTargetMonth) {
-      alert('コピー元月とコピー先月が同じです')
+    if (copyTargetMonth > copyTargetEndMonth) {
+      alert('コピー先終了月はコピー先開始月以降にしてください')
       return
     }
+    // source_end = source_start + cycle_months - 1日
+    const srcStart = new Date(`${copySourceMonth}-01T00:00:00`)
+    const srcEnd = new Date(srcStart.getFullYear(), srcStart.getMonth() + copyCycleMonths, 0)
+    const srcEndStr = `${srcEnd.getFullYear()}-${String(srcEnd.getMonth() + 1).padStart(2, '0')}-${String(srcEnd.getDate()).padStart(2, '0')}`
+    // target_end = last day of copyTargetEndMonth
+    const tgtEnd = new Date(parseInt(copyTargetEndMonth.split('-')[0]), parseInt(copyTargetEndMonth.split('-')[1]), 0)
+    const tgtEndStr = `${tgtEnd.getFullYear()}-${String(tgtEnd.getMonth() + 1).padStart(2, '0')}-${String(tgtEnd.getDate()).padStart(2, '0')}`
+
     setCopyRunning(true)
     try {
-      const res = await copyMenusRoutine({
+      const res = await scheduleMenusRoutine({
         source_start: `${copySourceMonth}-01`,
+        source_end: srcEndStr,
         target_start: `${copyTargetMonth}-01`,
-        months: 2,
+        target_end: tgtEndStr,
+        cycle_months: copyCycleMonths,
         include_birthday_menu: copyIncludeBirthday,
-        replace_existing: true,
+        overwrite: copyOverwrite,
         block_id: isAdmin ? null : userBlockId,
       })
-      await load(year, month)
       const d = res.data
-      alert(`2ヶ月コピペが完了しました\nコピー件数: ${d.copied}件\n置換削除: ${d.deleted}件\n期間: ${d.source_start}〜${d.source_end} → ${d.target_start}〜${d.target_end}`)
+      if (!d.ok) {
+        alert(`周期ルーティン登録に失敗しました\n${d.message ?? ''}`)
+        return
+      }
+      await load(year, month)
+      alert(`周期ルーティン登録が完了しました\nコピー件数: ${d.copied}件\nスキップ: ${d.skipped}件\n繰り返し回数: ${d.cycles}回\n期間: ${d.target_start}〜${d.target_end}`)
       setCopyOpen(false)
-    } catch {
-      alert('2ヶ月コピペに失敗しました')
+    } catch (e) {
+      console.error('[scheduleRoutine] error:', e)
+      const msg = e instanceof Error ? e.message : String(e)
+      alert(`周期ルーティン登録に失敗しました\n${msg}`)
     } finally {
       setCopyRunning(false)
     }
@@ -295,7 +314,7 @@ export default function MenusPage() {
             cursor: canRoutineCopy ? 'pointer' : 'not-allowed',
           }}
         >
-          2ヶ月コピペ
+          周期登録
         </button>
         {AI_PUBLIC_ENABLED && (
           <button
@@ -498,11 +517,17 @@ export default function MenusPage() {
         <RoutineCopyModal
           sourceMonth={copySourceMonth}
           targetMonth={copyTargetMonth}
+          targetEndMonth={copyTargetEndMonth}
+          cycleMonths={copyCycleMonths}
           includeBirthday={copyIncludeBirthday}
+          overwrite={copyOverwrite}
           running={copyRunning}
           onChangeSource={setCopySourceMonth}
           onChangeTarget={setCopyTargetMonth}
+          onChangeTargetEnd={setCopyTargetEndMonth}
+          onChangeCycleMonths={setCopyCycleMonths}
           onChangeIncludeBirthday={setCopyIncludeBirthday}
+          onChangeOverwrite={setCopyOverwrite}
           onClose={() => setCopyOpen(false)}
           onSubmit={handleRoutineCopy}
         />
@@ -528,11 +553,17 @@ interface MenuModalProps {
 interface RoutineCopyModalProps {
   sourceMonth: string
   targetMonth: string
+  targetEndMonth: string
+  cycleMonths: number
   includeBirthday: boolean
+  overwrite: boolean
   running: boolean
   onChangeSource: (v: string) => void
   onChangeTarget: (v: string) => void
+  onChangeTargetEnd: (v: string) => void
+  onChangeCycleMonths: (v: number) => void
   onChangeIncludeBirthday: (v: boolean) => void
+  onChangeOverwrite: (v: boolean) => void
   onClose: () => void
   onSubmit: () => void
 }
@@ -540,11 +571,17 @@ interface RoutineCopyModalProps {
 function RoutineCopyModal({
   sourceMonth,
   targetMonth,
+  targetEndMonth,
+  cycleMonths,
   includeBirthday,
+  overwrite,
   running,
   onChangeSource,
   onChangeTarget,
+  onChangeTargetEnd,
+  onChangeCycleMonths,
   onChangeIncludeBirthday,
+  onChangeOverwrite,
   onClose,
   onSubmit,
 }: RoutineCopyModalProps) {
@@ -566,7 +603,7 @@ function RoutineCopyModal({
         onClick={e => e.stopPropagation()}
         style={{
           width: '100%',
-          maxWidth: 460,
+          maxWidth: 480,
           background: '#fff',
           borderRadius: 12,
           boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
@@ -574,16 +611,32 @@ function RoutineCopyModal({
         }}
       >
         <div style={{ padding: '1rem 1.2rem', background: '#0b4a6f', color: '#fff', fontWeight: 700 }}>
-          2ヶ月ルーティン コピペ
+          周期ルーティン スケジュール登録
         </div>
         <div style={{ padding: '1rem 1.2rem', display: 'grid', gap: '0.85rem' }}>
           <label style={{ display: 'grid', gap: '0.25rem', fontSize: '0.84rem', color: '#334155' }}>
-            コピー元月（開始）
+            コピー元（開始月）
             <input type="month" value={sourceMonth} onChange={e => onChangeSource(e.target.value)} style={copyInputStyle} />
           </label>
           <label style={{ display: 'grid', gap: '0.25rem', fontSize: '0.84rem', color: '#334155' }}>
-            コピー先月（開始）
+            繰り返し周期（ヶ月）
+            <select
+              value={cycleMonths}
+              onChange={e => onChangeCycleMonths(Number(e.target.value))}
+              style={copyInputStyle}
+            >
+              {[1, 2, 3, 4, 6].map(n => (
+                <option key={n} value={n}>{n}ヶ月周期</option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: 'grid', gap: '0.25rem', fontSize: '0.84rem', color: '#334155' }}>
+            コピー先（開始月）
             <input type="month" value={targetMonth} onChange={e => onChangeTarget(e.target.value)} style={copyInputStyle} />
+          </label>
+          <label style={{ display: 'grid', gap: '0.25rem', fontSize: '0.84rem', color: '#334155' }}>
+            コピー先（終了月）
+            <input type="month" value={targetEndMonth} onChange={e => onChangeTargetEnd(e.target.value)} style={copyInputStyle} />
           </label>
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.84rem', color: '#334155' }}>
             <input
@@ -593,14 +646,22 @@ function RoutineCopyModal({
             />
             誕生日メニューを含める
           </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.84rem', color: '#334155' }}>
+            <input
+              type="checkbox"
+              checked={overwrite}
+              onChange={e => onChangeOverwrite(e.target.checked)}
+            />
+            既存の献立を上書きする（オフの場合はスキップ）
+          </label>
           <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
-            開始月から2ヶ月分を同じ日付ずれでコピーし、コピー先期間の既存献立を置換します。
+            コピー元の{cycleMonths}ヶ月分献立パターンを、コピー先期間に{cycleMonths}ヶ月周期で繰り返し登録します。
           </div>
         </div>
         <div style={{ padding: '0.85rem 1.2rem', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end', gap: '0.6rem' }}>
           <button onClick={onClose} disabled={running} style={copyCancelBtn}>閉じる</button>
           <button onClick={onSubmit} disabled={running} style={copyRunBtn}>
-            {running ? '実行中...' : '2ヶ月コピー実行'}
+            {running ? '実行中...' : `${cycleMonths}ヶ月周期で登録`}
           </button>
         </div>
       </div>
