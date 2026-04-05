@@ -48,8 +48,9 @@ jobs:
 
       - uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.2"
+          php-version: "8.3"
           tools: composer
+          extensions: intl, mbstring, dom, simplexml, xml, xmlreader, xmlwriter, zip
 
       - name: Validate composer.json
         run: composer validate --strict
@@ -86,9 +87,9 @@ jobs:
 
       - uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.2"
+          php-version: "8.3"
           tools: composer
-          extensions: pdo_mysql
+          extensions: pdo_mysql, intl, mbstring, dom, simplexml, xml, xmlreader, xmlwriter, zip
 
       - name: Install dependencies
         run: composer install --no-interaction --no-dev --optimize-autoloader
@@ -97,7 +98,7 @@ jobs:
         run: mkdir -p tmp/cache/models tmp/cache/persistent tmp/sessions logs
 
       - name: Run migrations
-        run: vendor/bin/cake migrations migrate
+        run: php migrate.php
         env:
           DB_HOST: 127.0.0.1
           DB_NAME: meal_order_test
