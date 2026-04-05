@@ -213,15 +213,18 @@ export default function MenusPage() {
           for (const mt of MEAL_TYPES) {
             // 既存がある食事は追加しない（上書きを防ぐ）
             if ((existingByMeal[String(mt)] ?? []).length > 0) continue
-            const first = (suggestions[String(mt)] ?? [])[0]
-            if (!first) continue
-            await saveMenu({
-              name: first,
-              menu_date: dateStr,
-              meal_type: mt,
-              block_id: block.id,
-            })
-            addedCount++
+            const byCategory = suggestions[String(mt)] ?? {}
+            for (const [dishCategory, name] of Object.entries(byCategory)) {
+              if (!name) continue
+              await saveMenu({
+                name,
+                menu_date: dateStr,
+                meal_type: mt,
+                block_id: block.id,
+                dish_category: dishCategory,
+              })
+              addedCount++
+            }
           }
         }
       }
@@ -859,7 +862,13 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
             for (const masterId of newMasterIds) {
               const master = masters.find(m => m.id === masterId)
               if (master) {
-                await saveMenu({ name: master.name, menu_date: date, meal_type: mt, block_id: block.id })
+                await saveMenu({
+                  name: master.name,
+                  menu_date: date,
+                  meal_type: mt,
+                  block_id: block.id,
+                  dish_category: master.dish_category ?? undefined,
+                })
               }
             }
           }
@@ -883,14 +892,15 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
       .filter((v): v is string => !!v)
   }
 
-  const mergeAiSuggestion = (blockId: number, suggestions: Record<string, string[]>) => {
+  const mergeAiSuggestion = (blockId: number, suggestions: Record<string, Record<string, string>>) => {
     const blockMasters = mastersForBlock(blockId)
     setSelections(prev => {
       const next = { ...prev, [blockId]: { ...(prev[blockId] ?? {}) } } as Selections
       for (const mt of MEAL_TYPES) {
         const current = new Set<number>(next[blockId]?.[mt] ?? [])
-        const names = suggestions[String(mt)] ?? []
-        for (const name of names) {
+        const byCategory = suggestions[String(mt)] ?? {}
+        for (const name of Object.values(byCategory)) {
+          if (!name) continue
           const m = blockMasters.find(mm => mm.name === name)
           if (m) current.add(m.id)
         }

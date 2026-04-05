@@ -264,11 +264,13 @@ export interface MenuInput {
   meal_type: MealType;
   block_id: number;
   grams_per_person?: number;
+  dish_category?: string;
 }
 
 export interface MenuItem {
   id: number;
   name: string;
+  dish_category: string | null;
   menu_date: string;
   meal_type: MealType;
   block_id: number;
@@ -332,7 +334,8 @@ export interface AiMenuSuggestResponse {
   ok: boolean;
   date: string;
   block_id: number | null;
-  suggestions: Record<string, string[]>;
+  /** { meal_type_str: { dish_category: name } } */
+  suggestions: Record<string, Record<string, string>>;
   candidate_count: number;
   raw?: string;
   message?: string;
