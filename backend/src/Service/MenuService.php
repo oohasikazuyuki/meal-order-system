@@ -49,14 +49,18 @@ class MenuService
         $menuDate = $data['menu_date'] ?? null;
         $mealType = isset($data['meal_type']) ? (int)$data['meal_type'] : null;
         $blockId = isset($data['block_id']) ? (int)$data['block_id'] : null;
+        $dishCategory = isset($data['dish_category']) ? trim((string)$data['dish_category']) : '';
 
         $existing = null;
-        if ($menuDate && $mealType && $blockId) {
-            $existing = $this->menuRepository->findByDateMealTypeAndBlock(
-                $menuDate,
-                $mealType,
-                $blockId
-            );
+        if ($menuDate && $mealType && $blockId !== null) {
+            // dish_category が指定されていれば新しい複合キーで検索、なければ旧来の検索
+            $existing = $dishCategory !== ''
+                ? $this->menuRepository->findByDateMealTypeCategoryAndBlock(
+                    $menuDate, $mealType, $dishCategory, $blockId
+                )
+                : $this->menuRepository->findByDateMealTypeAndBlock(
+                    $menuDate, $mealType, $blockId
+                );
         }
 
         $menu = $existing

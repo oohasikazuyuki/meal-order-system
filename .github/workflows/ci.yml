@@ -28,6 +28,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Test
+        run: npm test
+
       - name: Build
         run: npm run build
         env:
@@ -45,14 +48,18 @@ jobs:
 
       - uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.2"
+          php-version: "8.3"
           tools: composer
+          extensions: intl, mbstring, dom, simplexml, xml, xmlreader, xmlwriter, zip
 
       - name: Validate composer.json
         run: composer validate --strict
 
       - name: Install dependencies
-        run: composer install --no-interaction --no-dev --optimize-autoloader
+        run: composer install --no-interaction --optimize-autoloader
+
+      - name: Run PHPUnit tests
+        run: php vendor/bin/phpunit --no-coverage
 
   migrate:
     name: DB Migration
@@ -64,10 +71,10 @@ jobs:
       mysql:
         image: mysql:8.0
         env:
-          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
-          MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
-          MYSQL_USER: ${{ secrets.MYSQL_USER }}
-          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: meal_order_test
+          MYSQL_USER: meal_user
+          MYSQL_PASSWORD: meal_pass
         ports:
           - 3306:3306
         options: >-
@@ -80,9 +87,9 @@ jobs:
 
       - uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.2"
+          php-version: "8.3"
           tools: composer
-          extensions: pdo_mysql
+          extensions: pdo_mysql, intl, mbstring, dom, simplexml, xml, xmlreader, xmlwriter, zip
 
       - name: Install dependencies
         run: composer install --no-interaction --no-dev --optimize-autoloader
@@ -91,12 +98,12 @@ jobs:
         run: mkdir -p tmp/cache/models tmp/cache/persistent tmp/sessions logs
 
       - name: Run migrations
-        run: vendor/bin/cake migrations migrate
+        run: php migrate.php
         env:
           DB_HOST: 127.0.0.1
-          DB_NAME: ${{ secrets.MYSQL_DATABASE }}
-          DB_USER: ${{ secrets.MYSQL_USER }}
-          DB_PASS: ${{ secrets.MYSQL_PASSWORD }}
+          DB_NAME: meal_order_test
+          DB_USER: meal_user
+          DB_PASS: meal_pass
 
   docker-config:
     name: Docker Compose Config Validation
