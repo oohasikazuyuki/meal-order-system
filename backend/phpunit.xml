@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="tests/bootstrap.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache"
+>
+    <testsuites>
+        <testsuite name="Domain">
+            <directory>tests/Domain</directory>
+        </testsuite>
+        <testsuite name="Application">
+            <directory>tests/Application</directory>
+        </testsuite>
+        <testsuite name="Service">
+            <directory>tests/Service</directory>
+        </testsuite>
+        <testsuite name="Controller">
+            <directory>tests/Controller</directory>
+        </testsuite>
+    </testsuites>
+
+    <source>
+        <include>
+            <directory>src</directory>
+        </include>
+        <exclude>
+            <directory>src/Model/Table</directory>
+            <directory>src/Model/Entity</directory>
+        </exclude>
+    </source>
+
+    <coverage>
+        <report>
+            <html outputDirectory="build/coverage-html"/>
+            <text outputFile="build/coverage.txt" showUncoveredFiles="true"/>
+            <clover outputFile="build/coverage.xml"/>
+        </report>
+    </coverage>
+</phpunit>

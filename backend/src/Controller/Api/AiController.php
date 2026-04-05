@@ -6,6 +6,16 @@ use DateTime;
 
 class AiController extends AppController
 {
+    private AiMenuLogicHelper $logic;
+
+    public function initialize(): void
+    {
+        parent::initialize();
+        $this->MenuMasters = $this->fetchTable('MenuMasters');
+        $this->Suppliers = $this->fetchTable('Suppliers');
+        $this->logic = new AiMenuLogicHelper();
+    }
+
     private function ensureAiPublicEnabled(): bool
     {
         $enabled = strtolower((string)(getenv('AI_PUBLIC_ENABLED') ?: 'false')) === 'true';
@@ -16,13 +26,6 @@ class AiController extends AppController
         $this->set(['ok' => false, 'message' => 'Not Found']);
         $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
         return false;
-    }
-
-    public function initialize(): void
-    {
-        parent::initialize();
-        $this->MenuMasters = $this->fetchTable('MenuMasters');
-        $this->Suppliers = $this->fetchTable('Suppliers');
     }
 
     /**
@@ -162,7 +165,7 @@ class AiController extends AppController
     /** 候補アイテムから名前のみの配列を返す（menu-master-draft 等で使用） */
     private function candidateItemsToNames(array $items): array
     {
-        return array_map(fn($i) => $i['name'], $items);
+        return $this->logic->candidateItemsToNames($items);
     }
 
     /**
@@ -244,29 +247,13 @@ class AiController extends AppController
 
     /**
      * AI提案レスポンスを正規化する。
-     * 各食事種別の値が {dish_category: name} 形式であることを確認し、
-     * 候補セットにない名前を除外する。
-     *
      * @param array $raw AI返却のsuggestionsオブジェクト
      * @param array $candidateSet [name => dish_category]
      * @return array {meal_type_str: {dish_category: name}}
      */
     private function normalizeCategorySuggestions(array $raw, array $candidateSet): array
     {
-        $result = [];
-        foreach ([1, 2, 3, 4] as $mt) {
-            $byCategory = isset($raw[(string)$mt]) ? (array)$raw[(string)$mt] : (array)($raw[$mt] ?? []);
-            $normalized = [];
-            foreach ($byCategory as $cat => $name) {
-                $cat = trim((string)$cat);
-                $name = trim((string)$name);
-                if ($cat === '' || $name === '') continue;
-                if (!array_key_exists($name, $candidateSet)) continue;
-                $normalized[$cat] = $name;
-            }
-            $result[(string)$mt] = $normalized;
-        }
-        return $result;
+        return $this->logic->normalizeCategorySuggestions($raw, $candidateSet);
     }
 
     private function generateMenuMasterDraftWithOllama(string $name, array $candidates, array $suppliers): array
@@ -303,66 +290,12 @@ class AiController extends AppController
 
     private function normalizeMenuMasterDraft(array $raw, array $suppliers): array
     {
-        $unitAllowed = array_fill_keys(['g', 'kg', 'ml', 'L', '個', '枚', '本', '袋', '缶', '束', '合', '大さじ', '小さじ', '切れ', '適量'], true);
-        $grams = (float)($raw['grams_per_person'] ?? 0);
-        if (!is_finite($grams) || $grams < 0 || $grams > 5000) {
-            $grams = 0;
-        }
-        $memo = trim((string)($raw['memo'] ?? ''));
-        $ingredientsRaw = (array)($raw['ingredients'] ?? []);
-        $ingredients = [];
-
-        foreach ($ingredientsRaw as $item) {
-            if (!is_array($item)) continue;
-            $ingName = trim((string)($item['name'] ?? ''));
-            if ($ingName === '') continue;
-
-            $amount = (float)($item['amount'] ?? 0);
-            if (!is_finite($amount) || $amount < 0 || $amount > 100000) {
-                $amount = 0;
-            }
-
-            $unit = trim((string)($item['unit'] ?? 'g'));
-            if (!isset($unitAllowed[$unit])) {
-                $unit = 'g';
-            }
-
-            $personsPerUnit = $item['persons_per_unit'] ?? null;
-            $personsPerUnit = ($personsPerUnit !== null && $personsPerUnit !== '') ? (int)$personsPerUnit : null;
-            if ($personsPerUnit !== null && $personsPerUnit <= 0) {
-                $personsPerUnit = null;
-            }
-
-            $supplierName = trim((string)($item['supplier_name'] ?? ''));
-            $supplierId = $this->resolveSupplierIdByName($supplierName, $suppliers);
-
-            $ingredients[] = [
-                'name' => $ingName,
-                'amount' => $amount,
-                'unit' => $unit,
-                'persons_per_unit' => $personsPerUnit,
-                'supplier_id' => $supplierId,
-            ];
-            if (count($ingredients) >= 12) break;
-        }
-
-        return [
-            'grams_per_person' => $grams,
-            'memo' => $memo,
-            'ingredients' => $ingredients,
-        ];
+        return $this->logic->normalizeMenuMasterDraft($raw, $suppliers);
     }
 
     private function resolveSupplierIdByName(string $name, array $suppliers): ?int
     {
-        if ($name === '') return null;
-        foreach ($suppliers as $s) {
-            $sName = (string)($s->name ?? '');
-            if ($sName !== '' && ($sName === $name || str_contains($name, $sName) || str_contains($sName, $name))) {
-                return (int)$s->id;
-            }
-        }
-        return null;
+        return $this->logic->resolveSupplierIdByName($name, $suppliers);
     }
 
     private function generateMenuNameWithOllama(array $candidates): ?string
@@ -588,101 +521,26 @@ class AiController extends AppController
 
     private function extractSuggestionsFromPartialText(string $text, array $candidateSet): ?array
     {
-        // 新形式: {"1": {"主食": "名前", ...}, ...}
-        $out = [];
-        foreach ([1, 2, 3, 4] as $mt) {
-            $out[(string)$mt] = [];
-            // meal_type ブロックを抽出
-            if (!preg_match('/"' . $mt . '"\s*:\s*\{([^}]+)\}/u', $text, $block)) {
-                continue;
-            }
-            $blockText = $block[1];
-            // key:value ペアを抽出
-            preg_match_all('/"([^"]+)"\s*:\s*"([^"]+)"/u', $blockText, $pairs, PREG_SET_ORDER);
-            foreach ($pairs as $pair) {
-                $cat  = trim($pair[1]);
-                $name = trim($pair[2]);
-                if ($cat !== '' && $name !== '' && array_key_exists($name, $candidateSet)) {
-                    $out[(string)$mt][$cat] = $name;
-                }
-            }
-        }
-
-        $hasAny = false;
-        foreach ($out as $vals) {
-            if (!empty($vals)) {
-                $hasAny = true;
-                break;
-            }
-        }
-        return $hasAny ? $out : null;
+        return $this->logic->extractSuggestionsFromPartialText($text, $candidateSet);
     }
 
     private function seasonLabel(string $date): string
     {
-        $dt = new DateTime($date);
-        $m = (int)$dt->format('n');
-        return match (true) {
-            in_array($m, [3, 4, 5], true) => '春',
-            in_array($m, [6, 7, 8], true) => '夏',
-            in_array($m, [9, 10, 11], true) => '秋',
-            default => '冬',
-        };
+        return $this->logic->seasonLabel($date);
     }
 
     private function isValidDate(string $date): bool
     {
-        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
-            return false;
-        }
-        $dt = DateTime::createFromFormat('Y-m-d', $date);
-        return $dt && $dt->format('Y-m-d') === $date;
+        return $this->logic->isValidDate($date);
     }
 
     /**
      * AI呼び出し失敗時のフォールバック。
-     * 各食事種別に対して料理区分ごとに1件ずつ疑似ランダム選択する。
      *
      * @param array $candidateItems [{name, dish_category}, ...]
      */
     private function fallbackSuggestions(string $date, array $candidateItems, array $existingByMeal): array
     {
-        // 料理区分ごとに候補を分類
-        $byCategory = [];
-        foreach ($candidateItems as $item) {
-            $cat = $item['dish_category'] ?? '';
-            $byCategory[$cat][] = $item['name'];
-        }
-
-        // 食事種別ごとの標準的な料理区分
-        $mealCategories = [
-            1 => ['主食', '主菜'],
-            2 => ['主食', '主菜', '副菜', '汁物'],
-            3 => ['主食', '主菜', '副菜', '汁物'],
-            4 => ['おやつ', 'デザート'],
-        ];
-
-        $result = [];
-        foreach ([1, 2, 3, 4] as $mt) {
-            $vals = isset($existingByMeal[(string)$mt]) ? (array)$existingByMeal[(string)$mt] : (array)($existingByMeal[$mt] ?? []);
-            $existing = array_fill_keys(array_filter(array_map(fn($v) => trim((string)$v), $vals), fn($v) => $v !== ''), true);
-
-            $categories = $mealCategories[$mt] ?? ['主菜'];
-            $picked = [];
-            foreach ($categories as $ci => $cat) {
-                $pool = $byCategory[$cat] ?? ($byCategory[''] ?? []);
-                $count = max(1, count($pool));
-                $base = abs(crc32($date . ':' . $mt . ':' . $ci)) % $count;
-                for ($i = 0; $i < $count; $i++) {
-                    $idx = ($base + $i) % $count;
-                    $name = trim((string)($pool[$idx] ?? ''));
-                    if ($name === '' || isset($existing[$name])) continue;
-                    $picked[$cat] = $name;
-                    break;
-                }
-            }
-            $result[(string)$mt] = $picked;
-        }
-        return $result;
+        return $this->logic->fallbackSuggestions($date, $candidateItems, $existingByMeal);
     }
 }
