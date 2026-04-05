@@ -1,4 +1,4 @@
-import axios, { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
+import axios, { InternalAxiosRequestConfig } from 'axios';
 
 const client = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost/api',
@@ -10,12 +10,13 @@ const ENABLE_CACHE = process.env.NEXT_PUBLIC_ENABLE_API_CACHE === 'true';
 const CACHE_TTL = 5 * 60 * 1000; // 5分
 
 // 簡易キャッシュ（クライアントサイドのみ）
-const getCache = (): Map<string, { data: any; timestamp: number }> | null => {
+const getCache = (): Map<string, { data: unknown; timestamp: number }> | null => {
   if (!ENABLE_CACHE || typeof window === 'undefined') return null;
-  if (!(window as any).__apiCache) {
-    (window as any).__apiCache = new Map();
+  const w = window as Window & { __apiCache?: Map<string, { data: unknown; timestamp: number }> };
+  if (!w.__apiCache) {
+    w.__apiCache = new Map();
   }
-  return (window as any).__apiCache;
+  return w.__apiCache;
 };
 
 // リクエストごとにトークンを付与
@@ -38,6 +39,7 @@ client.interceptors.request.use((config: InternalAxiosRequestConfig) => {
           statusText: 'OK (cached)',
           headers: {},
           config,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } as any);
       }
     } catch (e) {

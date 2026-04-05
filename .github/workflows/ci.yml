@@ -70,10 +70,10 @@ jobs:
       mysql:
         image: mysql:8.0
         env:
-          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
-          MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
-          MYSQL_USER: ${{ secrets.MYSQL_USER }}
-          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: meal_order_test
+          MYSQL_USER: meal_user
+          MYSQL_PASSWORD: meal_pass
         ports:
           - 3306:3306
         options: >-
@@ -100,9 +100,9 @@ jobs:
         run: vendor/bin/cake migrations migrate
         env:
           DB_HOST: 127.0.0.1
-          DB_NAME: ${{ secrets.MYSQL_DATABASE }}
-          DB_USER: ${{ secrets.MYSQL_USER }}
-          DB_PASS: ${{ secrets.MYSQL_PASSWORD }}
+          DB_NAME: meal_order_test
+          DB_USER: meal_user
+          DB_PASS: meal_pass
 
   docker-config:
     name: Docker Compose Config Validation

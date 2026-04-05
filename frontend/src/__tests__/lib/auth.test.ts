@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { saveAuth, clearAuth, getStoredUser, getStoredToken, isLoggedIn } from '../../app/_lib/auth'
 import type { AuthUser } from '../../app/_lib/api/client'
 
