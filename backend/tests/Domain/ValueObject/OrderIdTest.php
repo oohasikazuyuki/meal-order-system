@@ -42,24 +42,24 @@ class OrderIdTest extends TestCase
 
     public function testEqualsTrueForSameValue(): void
     {
-        $a = OrderId::fromInt(1);
-        $b = OrderId::fromInt(1);
-        $this->assertTrue($a->equals($b));
+        $leftOrderId = OrderId::fromInt(1);
+        $rightOrderId = OrderId::fromInt(1);
+        $this->assertTrue($leftOrderId->equals($rightOrderId));
     }
 
     public function testEqualsFalseForDifferentValue(): void
     {
-        $a = OrderId::fromInt(1);
-        $b = OrderId::fromInt(2);
-        $this->assertFalse($a->equals($b));
+        $leftOrderId = OrderId::fromInt(1);
+        $rightOrderId = OrderId::fromInt(2);
+        $this->assertFalse($leftOrderId->equals($rightOrderId));
     }
 
     public function testEqualsNewIds(): void
     {
-        $a = OrderId::generate();
-        $b = OrderId::generate();
+        $firstNewOrderId = OrderId::generate();
+        $secondNewOrderId = OrderId::generate();
         // どちらも null なので等価
-        $this->assertTrue($a->equals($b));
+        $this->assertTrue($firstNewOrderId->equals($secondNewOrderId));
     }
 
     // ── __toString ───────────────────────────────────────────────────────────

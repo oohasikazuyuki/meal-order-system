@@ -176,20 +176,20 @@ class AiMenuLogicHelperTest extends TestCase
             ['name' => 'ご飯', 'dish_category' => '主食'],
             ['name' => 'パン', 'dish_category' => '主食'],
         ];
-        $r1 = $this->helper->fallbackSuggestions('2026-04-05', $items, []);
-        $r2 = $this->helper->fallbackSuggestions('2026-04-05', $items, []);
-        $this->assertSame($r1, $r2);
+        $firstSuggestions = $this->helper->fallbackSuggestions('2026-04-05', $items, []);
+        $secondSuggestions = $this->helper->fallbackSuggestions('2026-04-05', $items, []);
+        $this->assertSame($firstSuggestions, $secondSuggestions);
     }
 
     public function testFallbackSuggestionsDiffersForDifferentDates(): void
     {
         $items = array_map(fn($i) => ['name' => "料理{$i}", 'dish_category' => '主食'], range(1, 10));
-        $r1 = $this->helper->fallbackSuggestions('2026-04-05', $items, []);
-        $r2 = $this->helper->fallbackSuggestions('2026-04-06', $items, []);
+        $suggestionsForFirstDate = $this->helper->fallbackSuggestions('2026-04-05', $items, []);
+        $suggestionsForSecondDate = $this->helper->fallbackSuggestions('2026-04-06', $items, []);
         // 日付が違えば結果が変わることを確認（同一になる確率は低い）
         // ここでは両方が配列であることのみ確認（サイズが同じでも値が異なることが多い）
-        $this->assertIsArray($r1);
-        $this->assertIsArray($r2);
+        $this->assertIsArray($suggestionsForFirstDate);
+        $this->assertIsArray($suggestionsForSecondDate);
     }
 
     // ── extractSuggestionsFromPartialText ────────────────────────────────────
