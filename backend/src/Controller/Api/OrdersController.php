@@ -5,6 +5,7 @@ use App\Application\Container\ServiceContainer;
 use App\Application\DTO\CreateOrderDTO;
 use App\Application\DTO\UpdateOrderDTO;
 use App\Application\Exception\ApplicationException;
+use App\Application\Exception\ErrorCode;
 use App\Application\Exception\InputValidationException;
 use App\Application\UseCase\CreateOrderUseCase;
 use App\Application\UseCase\DeleteOrderUseCase;
@@ -89,11 +90,11 @@ class OrdersController extends AppController
             ]);
             $this->viewBuilder()->setOption('serialize', ['success', 'order']);
         } catch (InputValidationException $e) {
-            $this->handleValidationError($e, 400);
+            $this->handleValidationError($e);
         } catch (DomainException $e) {
             $this->handleError($e, (int)$e->getCode());
         } catch (ApplicationException $e) {
-            $this->handleError($e, (int)$e->getCode());
+            $this->handleError($e, $e->getHttpStatus());
         } catch (\Exception $e) {
             $this->handleError($e, 500);
         }
@@ -150,15 +151,23 @@ class OrdersController extends AppController
     /**
      * バリデーションエラー処理
      */
-    private function handleValidationError(InputValidationException $e, int $statusCode): void
+    private function handleValidationError(InputValidationException $e): void
     {
+        $statusCode = $e->getHttpStatus() > 0 ? $e->getHttpStatus() : 400;
+        $requestId = $this->requestId();
         $this->response = $this->response->withStatus($statusCode);
         $this->set([
             'success' => false,
             'message' => $e->getMessage(),
-            'errors' => $e->getErrors()
+            'errors' => $e->getErrors(),
+            'error' => [
+                'code' => $e->getErrorCode(),
+                'message' => $e->getMessage(),
+                'details' => $e->getErrors(),
+                'request_id' => $requestId,
+            ],
         ]);
-        $this->viewBuilder()->setOption('serialize', ['success', 'message', 'errors']);
+        $this->viewBuilder()->setOption('serialize', ['success', 'message', 'errors', 'error']);
     }
 
     /**
@@ -166,15 +175,69 @@ class OrdersController extends AppController
      */
     private function handleError(\Exception $e, int $statusCode): void
     {
-        $this->response = $this->response->withStatus($statusCode);
+        $safeStatusCode = $statusCode > 0 ? $statusCode : 500;
+        $requestId = $this->requestId();
+        $errorCode = $this->resolveErrorCode($e, $safeStatusCode);
+        $this->response = $this->response->withStatus($safeStatusCode);
         $this->set([
             'success' => false,
             'message' => $e->getMessage(),
             'error' => [
-                'type' => (new \ReflectionClass($e))->getShortName(),
-                'code' => $e->getCode()
+                'code' => $errorCode,
+                'message' => $e->getMessage(),
+                'details' => $e instanceof ApplicationException ? $e->getDetails() : [],
+                'request_id' => $requestId,
             ]
         ]);
         $this->viewBuilder()->setOption('serialize', ['success', 'message', 'error']);
+    }
+
+    private function resolveErrorCode(\Exception $e, int $statusCode): string
+    {
+        if ($e instanceof ApplicationException) {
+            return $e->getErrorCode();
+        }
+
+        if ($e instanceof \InvalidArgumentException) {
+            return ErrorCode::ORDER_VALIDATION_DATE;
+        }
+
+        if ($e instanceof DomainException) {
+            if (str_contains($e->getMessage(), '同じメニューの発注が既に存在')) {
+                return ErrorCode::ORDER_DUPLICATE;
+            }
+            if (str_contains($e->getMessage(), '編集できません')) {
+                return ErrorCode::ORDER_STATE_NOT_EDITABLE;
+            }
+            if ($statusCode === 404) {
+                return ErrorCode::COMMON_NOT_FOUND;
+            }
+        }
+
+        if ($statusCode >= 500) {
+            return ErrorCode::COMMON_INTERNAL;
+        }
+        if ($statusCode === 404) {
+            return ErrorCode::COMMON_NOT_FOUND;
+        }
+        if ($statusCode === 409 || $statusCode === 422) {
+            return ErrorCode::COMMON_CONFLICT;
+        }
+
+        return ErrorCode::COMMON_VALIDATION;
+    }
+
+    private function requestId(): string
+    {
+        $requestId = trim((string)$this->request->getHeaderLine('X-Request-Id'));
+        if ($requestId !== '') {
+            return $requestId;
+        }
+
+        try {
+            return 'req_' . bin2hex(random_bytes(8));
+        } catch (\Exception) {
+            return 'req_' . str_replace('.', '', (string)microtime(true));
+        }
     }
 }

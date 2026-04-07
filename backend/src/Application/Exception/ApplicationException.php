@@ -8,8 +8,33 @@ namespace App\Application\Exception;
  */
 class ApplicationException extends \Exception
 {
-    public function __construct(string $message = '', int $code = 400, ?\Throwable $previous = null)
+    private string $errorCode;
+    private array $details;
+
+    public function __construct(
+        string $message = '',
+        int $httpStatus = 400,
+        string $errorCode = ErrorCode::COMMON_VALIDATION,
+        array $details = [],
+        ?\Throwable $previous = null
+    ) {
+        parent::__construct($message, $httpStatus, $previous);
+        $this->errorCode = $errorCode;
+        $this->details = $details;
+    }
+
+    public function getHttpStatus(): int
     {
-        parent::__construct($message, $code, $previous);
+        return (int)$this->getCode();
+    }
+
+    public function getErrorCode(): string
+    {
+        return $this->errorCode;
+    }
+
+    public function getDetails(): array
+    {
+        return $this->details;
     }
 }
