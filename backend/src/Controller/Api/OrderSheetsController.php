@@ -359,13 +359,19 @@ class OrderSheetsController extends AppController
         }
 
         $sheetType = $this->resolveSupplierSheetType($supplier);
-        $templateDir = dirname(APP) . '/resources/excel_templates/';
-        $templateMap = [
+        $templateDir  = dirname(APP) . '/resources/excel_templates/';
+        $uploadedDir  = dirname(APP) . '/resources/uploaded_templates/';
+        $templateMap  = [
             'sakana' => 'sakana_template.xlsx',
             'yaoki'  => 'yaoki_template.xlsx',
             'kawano' => 'kawano_template.xlsm',
         ];
-        $templateFile = $templateDir . ($templateMap[$sheetType] ?? '');
+
+        // アップロード済みテンプレートを優先使用し、なければデフォルトへフォールバック
+        $uploadedFile = $uploadedDir . $supplier->id . '.' . $supplier->file_ext;
+        $templateFile = file_exists($uploadedFile)
+            ? $uploadedFile
+            : $templateDir . ($templateMap[$sheetType] ?? '');
 
         if (!file_exists($templateFile)) {
             $this->response = $this->response->withStatus(404);

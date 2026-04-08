@@ -5,6 +5,7 @@ import {
   fetchRooms, createRoom, deleteRoom, syncKamahoRooms,
   fetchBlocks, createBlock, deleteBlock,
   fetchSuppliers, createSupplier, updateSupplier, deleteSupplier,
+  uploadSupplierTemplate, deleteSupplierTemplate, downloadSupplierTemplate,
   fetchKamahoMealCounts,
   type Room, type Block, type Supplier, type SupplierInput,
 } from '../_lib/api/client'
@@ -690,6 +691,8 @@ function SuppliersTab() {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [form, setForm] = useState<SupplierInput>({ name: '', code: '', has_order_sheet: 1, delivery_days: '', order_day: null, delivery_lead_weeks: 0, file_ext: 'xlsx', notes: '' })
   const [showForm, setShowForm] = useState(false)
+  const [templateUploading, setTemplateUploading] = useState(false)
+  const [templateMsg, setTemplateMsg] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -750,6 +753,53 @@ function SuppliersTab() {
     } catch {
       setSuppliers(prevSuppliers)
       setError('削除に失敗しました')
+    }
+  }
+
+  const handleTemplateUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!editingId) return
+    const file = e.target.files?.[0]
+    if (!file) return
+    setTemplateUploading(true)
+    setTemplateMsg(null)
+    try {
+      await uploadSupplierTemplate(editingId, file)
+      setTemplateMsg('テンプレートをアップロードしました')
+      setSuppliers(prev => prev.map(s => s.id === editingId ? { ...s, has_custom_template: true } : s))
+    } catch {
+      setTemplateMsg('アップロードに失敗しました')
+    } finally {
+      setTemplateUploading(false)
+      e.target.value = ''
+    }
+  }
+
+  const handleTemplateDelete = async () => {
+    if (!editingId) return
+    if (!confirm('カスタムテンプレートを削除してデフォルトに戻しますか？')) return
+    try {
+      await deleteSupplierTemplate(editingId)
+      setTemplateMsg('デフォルトテンプレートに戻しました')
+      setSuppliers(prev => prev.map(s => s.id === editingId ? { ...s, has_custom_template: false } : s))
+    } catch {
+      setTemplateMsg('削除に失敗しました')
+    }
+  }
+
+  const handleTemplateDownload = async () => {
+    if (!editingId) return
+    try {
+      const res = await downloadSupplierTemplate(editingId)
+      const supplier = suppliers.find(s => s.id === editingId)
+      const blob = new Blob([res.data as BlobPart])
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${supplier?.name ?? 'template'}_template.${supplier?.file_ext ?? 'xlsx'}`
+      a.click()
+      setTimeout(() => URL.revokeObjectURL(url), 10000)
+    } catch {
+      setTemplateMsg('ダウンロードに失敗しました')
     }
   }
 
@@ -862,6 +912,55 @@ function SuppliersTab() {
             </div>
           </div>
           {error && <p style={{ margin: '0.5rem 0 0', color: '#dc2626', fontSize: '0.85rem' }}>⚠ {error}</p>}
+
+          {/* テンプレート管理（編集時のみ表示） */}
+          {editingId && (
+            <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8 }}>
+              <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#15803d', marginBottom: '0.5rem' }}>
+                発注書テンプレート
+                {suppliers.find(s => s.id === editingId)?.has_custom_template && (
+                  <span style={{ marginLeft: '0.5rem', background: '#dcfce7', color: '#16a34a', padding: '0.1rem 0.4rem', borderRadius: 4, fontSize: '0.7rem' }}>カスタム使用中</span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <label style={{
+                  padding: '0.3rem 0.75rem', background: templateUploading ? '#e5e7eb' : '#1a3a5c', color: '#fff',
+                  borderRadius: 6, cursor: templateUploading ? 'not-allowed' : 'pointer', fontSize: '0.8rem', fontWeight: 600,
+                }}>
+                  {templateUploading ? 'アップロード中...' : 'テンプレートをアップロード'}
+                  <input
+                    type="file"
+                    accept=".xlsx,.xlsm"
+                    style={{ display: 'none' }}
+                    disabled={templateUploading}
+                    onChange={handleTemplateUpload}
+                  />
+                </label>
+                <button
+                  onClick={handleTemplateDownload}
+                  style={{ padding: '0.3rem 0.75rem', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 6, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}
+                >
+                  現在のテンプレートをDL
+                </button>
+                {suppliers.find(s => s.id === editingId)?.has_custom_template && (
+                  <button
+                    onClick={handleTemplateDelete}
+                    style={{ padding: '0.3rem 0.75rem', background: '#fef2f2', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: 6, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}
+                  >
+                    カスタムを削除（デフォルトに戻す）
+                  </button>
+                )}
+              </div>
+              <p style={{ fontSize: '0.72rem', color: '#6b7280', margin: '0.4rem 0 0' }}>
+                xlsx / xlsm ファイル（最大10MB）。セル位置を変えずに見た目のみカスタマイズできます。
+              </p>
+              {templateMsg && (
+                <p style={{ margin: '0.4rem 0 0', fontSize: '0.82rem', color: templateMsg.includes('失敗') ? '#dc2626' : '#16a34a' }}>
+                  {templateMsg.includes('失敗') ? '⚠ ' : '✓ '}{templateMsg}
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -897,6 +996,7 @@ function SuppliersTab() {
               <th style={th}>発注曜日</th>
               <th style={{ ...th, textAlign: 'center' }}>翌週納品</th>
               <th style={th}>ファイル形式</th>
+              <th style={{ ...th, textAlign: 'center' }}>テンプレート</th>
               <th style={{ ...th, width: 150, textAlign: 'center' }}>操作</th>
             </tr>
           </thead>
@@ -925,6 +1025,11 @@ function SuppliersTab() {
                     : <span style={{ color: '#9ca3af' }}>—</span>}
                 </td>
                 <td style={td}><span style={{ background: '#f3f4f6', padding: '0.2rem 0.5rem', borderRadius: 4, fontSize: '0.85rem', fontFamily: 'monospace' }}>{s.file_ext}</span></td>
+                <td style={{ ...td, textAlign: 'center' }}>
+                  {s.has_custom_template
+                    ? <span style={{ background: '#dcfce7', color: '#15803d', padding: '0.15rem 0.5rem', borderRadius: 4, fontSize: '0.78rem', fontWeight: 600 }}>カスタム</span>
+                    : <span style={{ color: '#9ca3af', fontSize: '0.78rem' }}>デフォルト</span>}
+                </td>
                 <td style={{ ...td, textAlign: 'center' }}>
                   <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'center' }}>
                     <button
