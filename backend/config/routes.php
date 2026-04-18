@@ -66,6 +66,8 @@ return static function (RouteBuilder $routes): void {
         $routes->connect('/ai/menu-suggest',  ['controller' => 'Ai', 'action' => 'menuSuggest'], ['_method' => 'POST']);
         $routes->connect('/ai/menu-master-draft', ['controller' => 'Ai', 'action' => 'menuMasterDraft'], ['_method' => 'POST']);
 
+        $routes->resources('BirthdayMenuDates', ['only' => ['index', 'create', 'update', 'delete']]);
+
         $routes->connect(
             '/kamaho-meal-counts',
             ['controller' => 'KamahoMealCounts', 'action' => 'index']

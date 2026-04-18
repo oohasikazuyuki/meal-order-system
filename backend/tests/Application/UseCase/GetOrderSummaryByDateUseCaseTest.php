@@ -26,10 +26,10 @@ class GetOrderSummaryByDateUseCaseTest extends TestCase
     public function testExecuteReturnsOrdersForDate(): void
     {
         $date = OrderDate::fromString('2026-06-01');
-        $o1 = Order::create(1, 10, 2, $date);
-        $o2 = Order::create(2, 20, 3, $date);
+        $firstOrder = Order::create(1, 10, 2, $date);
+        $secondOrder = Order::create(2, 20, 3, $date);
 
-        $this->repo->method('findByDateExcludingStatus')->willReturn([$o1, $o2]);
+        $this->repo->method('findByDateExcludingStatus')->willReturn([$firstOrder, $secondOrder]);
 
         $result = $this->useCase->execute('2026-06-01');
 

@@ -24,16 +24,16 @@ class GetOrderListUseCaseTest extends TestCase
     public function testExecuteReturnsAllOrders(): void
     {
         $date = OrderDate::fromString('2026-04-05');
-        $o1 = Order::create(1, 10, 1, $date);
-        $o2 = Order::create(2, 20, 3, $date);
+        $firstOrder = Order::create(1, 10, 1, $date);
+        $secondOrder = Order::create(2, 20, 3, $date);
 
-        $this->repo->method('findAll')->willReturn([$o1, $o2]);
+        $this->repo->method('findAll')->willReturn([$firstOrder, $secondOrder]);
 
         $result = $this->useCase->execute();
 
         $this->assertCount(2, $result);
-        $this->assertSame($o1, $result[0]);
-        $this->assertSame($o2, $result[1]);
+        $this->assertSame($firstOrder, $result[0]);
+        $this->assertSame($secondOrder, $result[1]);
     }
 
     public function testExecuteReturnsEmptyArrayWhenNoOrders(): void

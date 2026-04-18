@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   fetchMenusByMonth, saveMenu, deleteMenu,
   fetchMenuMasters, fetchBlocks, fetchMenuTablePdf, suggestMenuByAi, scheduleMenusRoutine,
+  fetchBirthdayMenuDates,
   MEAL_TYPE_LABELS, type MealType, type MenuItem, type MenuMaster, type Block, type AiMenuSuggestResponse,
 } from '../_lib/api/client'
 import { getStoredUser } from '../_lib/auth'
@@ -64,6 +65,7 @@ export default function MenusPage() {
   const [menus, setMenus] = useState<MenuItem[]>([])
   const [blocks, setBlocks] = useState<Block[]>([])
   const [masters, setMasters] = useState<MenuMaster[]>([])
+  const [birthdayDates, setBirthdayDates] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   const [monthAiRunning, setMonthAiRunning] = useState(false)
   const [monthAiProgress, setMonthAiProgress] = useState<string | null>(null)
@@ -86,9 +88,13 @@ export default function MenusPage() {
   const load = useCallback(async (y: number, m: number): Promise<MenuItem[]> => {
     setLoading(true)
     try {
-      const res = await fetchMenusByMonth(y, m)
-      setMenus(res.data.menus)
-      return res.data.menus
+      const [menusRes, bdRes] = await Promise.all([
+        fetchMenusByMonth(y, m),
+        fetchBirthdayMenuDates(y, m),
+      ])
+      setMenus(menusRes.data.menus)
+      setBirthdayDates(new Set(bdRes.data.birthday_menu_dates.map(b => b.menu_date)))
+      return menusRes.data.menus
     } catch {
       return []
     } finally {
@@ -371,6 +377,7 @@ export default function MenusPage() {
                 const dateStr = day ? toDateStr(year, month, day) : ''
                 const badges = day ? mealBadges(dateStr) : []
                 const isToday = dateStr === todayStr
+                const isBirthday = day ? birthdayDates.has(dateStr) : false
                 const isSun = di === 0
                 const isSat = di === 6
                 const hasMenus = badges.length > 0
@@ -394,15 +401,20 @@ export default function MenusPage() {
                     {day && (
                       <>
                         {/* 日付数字 */}
-                        <div style={{
-                          width: 28, height: 28, borderRadius: '50%',
-                          background: isToday ? '#1a3a5c' : 'transparent',
-                          color: isToday ? '#fff' : isSun ? '#ef4444' : isSat ? '#3b82f6' : '#374151',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          fontSize: '0.84rem', fontWeight: isToday ? 700 : 500,
-                          marginBottom: '0.3rem',
-                        }}>
-                          {day}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginBottom: '0.3rem' }}>
+                          <div style={{
+                            width: 28, height: 28, borderRadius: '50%',
+                            background: isToday ? '#1a3a5c' : 'transparent',
+                            color: isToday ? '#fff' : isSun ? '#ef4444' : isSat ? '#3b82f6' : '#374151',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: '0.84rem', fontWeight: isToday ? 700 : 500,
+                            flexShrink: 0,
+                          }}>
+                            {day}
+                          </div>
+                          {isBirthday && (
+                            <span title="誕生日メニュー" style={{ fontSize: '0.85rem', lineHeight: 1 }}>🎂</span>
+                          )}
                         </div>
 
                         {/* 献立バッジ */}

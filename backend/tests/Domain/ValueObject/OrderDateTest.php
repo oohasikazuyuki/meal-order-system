@@ -78,16 +78,16 @@ class OrderDateTest extends TestCase
 
     public function testEqualsReturnsTrueForSameDate(): void
     {
-        $a = OrderDate::fromString('2026-04-05');
-        $b = OrderDate::fromString('2026-04-05');
-        $this->assertTrue($a->equals($b));
+        $leftDate = OrderDate::fromString('2026-04-05');
+        $rightDate = OrderDate::fromString('2026-04-05');
+        $this->assertTrue($leftDate->equals($rightDate));
     }
 
     public function testEqualsReturnsFalseForDifferentDate(): void
     {
-        $a = OrderDate::fromString('2026-04-05');
-        $b = OrderDate::fromString('2026-04-06');
-        $this->assertFalse($a->equals($b));
+        $leftDate = OrderDate::fromString('2026-04-05');
+        $rightDate = OrderDate::fromString('2026-04-06');
+        $this->assertFalse($leftDate->equals($rightDate));
     }
 
     // ── __toString ───────────────────────────────────────────────────────────

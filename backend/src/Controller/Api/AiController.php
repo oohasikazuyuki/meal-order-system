@@ -1,6 +1,7 @@
 <?php
 namespace App\Controller\Api;
 
+use App\Application\Exception\ErrorCode;
 use App\Controller\AppController;
 use DateTime;
 
@@ -22,9 +23,7 @@ class AiController extends AppController
         if ($enabled) {
             return true;
         }
-        $this->response = $this->response->withStatus(404);
-        $this->set(['ok' => false, 'message' => 'Not Found']);
-        $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+        $this->respondError(404, ErrorCode::COMMON_NOT_FOUND, 'Not Found');
         return false;
     }
 
@@ -43,9 +42,9 @@ class AiController extends AppController
         }
         $date = (string)($this->request->getData('date') ?? '');
         if (!$this->isValidDate($date)) {
-            $this->response = $this->response->withStatus(400);
-            $this->set(['ok' => false, 'message' => 'date (YYYY-MM-DD) は必須です']);
-            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+            $this->respondError(400, ErrorCode::ORDER_VALIDATION_DATE, 'date (YYYY-MM-DD) は必須です', [
+                'date' => 'YYYY-MM-DD 形式で指定してください',
+            ]);
             return;
         }
 
@@ -55,17 +54,17 @@ class AiController extends AppController
 
         $candidateItems = $this->fetchCandidateMenuNames($blockId);
         if (empty($candidateItems)) {
-            $this->response = $this->response->withStatus(400);
-            $this->set(['ok' => false, 'message' => '提案対象のメニューマスタがありません']);
-            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+            $this->respondError(400, ErrorCode::MENU_VALIDATION, '提案対象のメニューマスタがありません');
             return;
         }
 
         [$suggestions, $rawText] = $this->generateSuggestionsWithOllama($date, $candidateItems, $existingByMeal);
         if ($suggestions === null) {
-            $this->response = $this->response->withStatus(502);
-            $this->set(['ok' => false, 'message' => 'AI提案の生成に時間がかかっています。しばらくしてから再実行してください。']);
-            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+            $this->respondError(
+                502,
+                ErrorCode::AI_PARSE,
+                'AI提案の生成に時間がかかっています。しばらくしてから再実行してください。'
+            );
             return;
         }
 
@@ -99,9 +98,7 @@ class AiController extends AppController
             $name = $this->generateMenuNameWithOllama($candidateNames) ?? '';
             $nameGenerated = $name !== '';
             if ($name === '') {
-                $this->response = $this->response->withStatus(502);
-                $this->set(['ok' => false, 'message' => '料理名のAI生成に失敗しました']);
-                $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+                $this->respondError(502, ErrorCode::AI_PARSE, '料理名のAI生成に失敗しました');
                 return;
             }
         }
@@ -113,9 +110,12 @@ class AiController extends AppController
 
         [$draft, $rawText] = $this->generateMenuMasterDraftWithOllama($name, $candidateNames, $suppliers);
         if ($draft === null) {
-            $this->response = $this->response->withStatus(502);
-            $this->set(['ok' => false, 'message' => 'AI下書きの生成に時間がかかっています。しばらくしてから再実行してください。', 'raw' => $rawText ?: '']);
-            $this->viewBuilder()->setOption('serialize', ['ok', 'message', 'raw']);
+            $this->respondError(
+                502,
+                ErrorCode::AI_PARSE,
+                'AI下書きの生成に時間がかかっています。しばらくしてから再実行してください。',
+                ['raw' => $rawText ?: '']
+            );
             return;
         }
 
@@ -542,5 +542,35 @@ class AiController extends AppController
     private function fallbackSuggestions(string $date, array $candidateItems, array $existingByMeal): array
     {
         return $this->logic->fallbackSuggestions($date, $candidateItems, $existingByMeal);
+    }
+
+    private function respondError(int $statusCode, string $errorCode, string $message, array $details = []): void
+    {
+        $this->response = $this->response->withStatus($statusCode);
+        $this->set([
+            'ok' => false,
+            'message' => $message,
+            'error' => [
+                'code' => $errorCode,
+                'message' => $message,
+                'details' => $details,
+                'request_id' => $this->requestId(),
+            ],
+        ]);
+        $this->viewBuilder()->setOption('serialize', ['ok', 'message', 'error']);
+    }
+
+    private function requestId(): string
+    {
+        $requestId = trim((string)$this->request->getHeaderLine('X-Request-Id'));
+        if ($requestId !== '') {
+            return $requestId;
+        }
+
+        try {
+            return 'req_' . bin2hex(random_bytes(8));
+        } catch (\Exception) {
+            return 'req_' . str_replace('.', '', (string)microtime(true));
+        }
     }
 }

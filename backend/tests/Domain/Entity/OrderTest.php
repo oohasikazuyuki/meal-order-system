@@ -157,17 +157,17 @@ class OrderTest extends TestCase
     public function testToArrayContainsRequiredKeys(): void
     {
         $order = $this->makeOrder(userId: 3, menuId: 7, quantity: 2, date: '2026-04-05');
-        $arr = $order->toArray();
+        $orderData = $order->toArray();
 
-        $this->assertArrayHasKey('user_id', $arr);
-        $this->assertArrayHasKey('menu_id', $arr);
-        $this->assertArrayHasKey('quantity', $arr);
-        $this->assertArrayHasKey('order_date', $arr);
-        $this->assertArrayHasKey('status', $arr);
-        $this->assertSame(3, $arr['user_id']);
-        $this->assertSame(7, $arr['menu_id']);
-        $this->assertSame(2, $arr['quantity']);
-        $this->assertSame('2026-04-05', $arr['order_date']);
-        $this->assertSame('pending', $arr['status']);
+        $this->assertArrayHasKey('user_id', $orderData);
+        $this->assertArrayHasKey('menu_id', $orderData);
+        $this->assertArrayHasKey('quantity', $orderData);
+        $this->assertArrayHasKey('order_date', $orderData);
+        $this->assertArrayHasKey('status', $orderData);
+        $this->assertSame(3, $orderData['user_id']);
+        $this->assertSame(7, $orderData['menu_id']);
+        $this->assertSame(2, $orderData['quantity']);
+        $this->assertSame('2026-04-05', $orderData['order_date']);
+        $this->assertSame('pending', $orderData['status']);
     }
 }

@@ -99,10 +99,10 @@ class OrderDomainServiceTest extends TestCase
     public function testCalculateTotalQuantityByDateSumsQuantities(): void
     {
         $date = OrderDate::fromString('2026-06-01');
-        $o1 = Order::create(1, 1, 3, $date);
-        $o2 = Order::create(2, 2, 5, $date);
+        $firstOrder = Order::create(1, 1, 3, $date);
+        $secondOrder = Order::create(2, 2, 5, $date);
 
-        $this->repo->method('findByDateExcludingStatus')->willReturn([$o1, $o2]);
+        $this->repo->method('findByDateExcludingStatus')->willReturn([$firstOrder, $secondOrder]);
 
         $total = $this->service->calculateTotalQuantityByDate($date);
         $this->assertSame(8, $total);

@@ -206,6 +206,19 @@ export const suggestMenuByAi = (data: AiMenuSuggestInput) =>
 export const draftMenuMasterByAi = (data: AiMenuMasterDraftInput) =>
   client.post<AiMenuMasterDraftResponse>('/ai/menu-master-draft', data)
 
+// --- Birthday Menu Dates ---
+export const fetchBirthdayMenuDates = (year: number, month: number, blockId?: number | null) => {
+  const params = new URLSearchParams({ year: String(year), month: String(month) });
+  if (blockId != null) params.set('block_id', String(blockId));
+  return client.get<{ birthday_menu_dates: BirthdayMenuDate[] }>(`/birthday-menu-dates?${params}`);
+};
+export const createBirthdayMenuDate = (data: BirthdayMenuDateInput) =>
+  withCacheClear(client.post<{ success: boolean; birthday_menu_date: BirthdayMenuDate }>('/birthday-menu-dates', data));
+export const updateBirthdayMenuDate = (id: number, data: BirthdayMenuDateInput) =>
+  withCacheClear(client.put<{ success: boolean; birthday_menu_date: BirthdayMenuDate }>(`/birthday-menu-dates/${id}`, data));
+export const deleteBirthdayMenuDate = (id: number) =>
+  withCacheClear(client.delete(`/birthday-menu-dates/${id}`));
+
 // --- Kamaho Rooms Sync ---
 export const syncKamahoRooms = () =>
   client.post<{ ok: boolean; added: string[]; rooms: Room[]; kamaho_rooms: string[] }>('/rooms/sync-kamaho');
@@ -606,6 +619,19 @@ export interface MenuTableResponse {
   week_end: string
   /** dayIndex 0=Mon .. 6=Sun (配列で返却) */
   days: MenuTableDay[]
+}
+
+export interface BirthdayMenuDate {
+  id: number;
+  menu_date: string;
+  block_id: number | null;
+  memo: string | null;
+}
+
+export interface BirthdayMenuDateInput {
+  menu_date: string;
+  block_id?: number | null;
+  memo?: string;
 }
 
 export const MEAL_TYPE_LABELS: Record<MealType, string> = {

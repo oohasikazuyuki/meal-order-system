@@ -46,9 +46,9 @@ class OrderStatusTest extends TestCase
 
     public function testFromStringValidValues(): void
     {
-        foreach (['pending', 'confirmed', 'completed', 'cancelled'] as $val) {
-            $s = OrderStatus::fromString($val);
-            $this->assertSame($val, $s->value());
+        foreach (['pending', 'confirmed', 'completed', 'cancelled'] as $statusValue) {
+            $status = OrderStatus::fromString($statusValue);
+            $this->assertSame($statusValue, $status->value());
         }
     }
 
@@ -69,16 +69,16 @@ class OrderStatusTest extends TestCase
 
     public function testEqualsReturnsTrueForSameStatus(): void
     {
-        $a = OrderStatus::pending();
-        $b = OrderStatus::pending();
-        $this->assertTrue($a->equals($b));
+        $leftStatus = OrderStatus::pending();
+        $rightStatus = OrderStatus::pending();
+        $this->assertTrue($leftStatus->equals($rightStatus));
     }
 
     public function testEqualsReturnsFalseForDifferentStatus(): void
     {
-        $a = OrderStatus::pending();
-        $b = OrderStatus::confirmed();
-        $this->assertFalse($a->equals($b));
+        $leftStatus = OrderStatus::pending();
+        $rightStatus = OrderStatus::confirmed();
+        $this->assertFalse($leftStatus->equals($rightStatus));
     }
 
     // ── __toString ───────────────────────────────────────────────────────────
