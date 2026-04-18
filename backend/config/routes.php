@@ -28,10 +28,13 @@ return static function (RouteBuilder $routes): void {
         $routes->connect('/auth/login',  ['controller' => 'Auth', 'action' => 'login'],  ['_name' => 'auth_login',  '_method' => 'POST']);
         $routes->connect('/auth/logout', ['controller' => 'Auth', 'action' => 'logout'], ['_name' => 'auth_logout', '_method' => 'POST']);
         $routes->connect('/auth/me',     ['controller' => 'Auth', 'action' => 'me'],     ['_name' => 'auth_me',     '_method' => 'GET']);
+        $routes->connect('/auth/kamaho-link', ['controller' => 'Auth', 'action' => 'kamahoLink'], ['_name' => 'auth_kamaho_link', '_method' => 'GET']);
+        $routes->connect('/auth/kamaho-link', ['controller' => 'Auth', 'action' => 'updateKamahoLink'], ['_method' => 'PUT']);
 
         $routes->resources('Users', ['only' => ['index', 'create', 'update', 'delete']]);
 
         // 部屋: kamaho同期カスタムルートを先に定義
+        $routes->connect('/rooms/kamaho-login', ['controller' => 'Rooms', 'action' => 'kamahoLogin'], ['_method' => 'POST']);
         $routes->connect('/rooms/sync-kamaho', ['controller' => 'Rooms', 'action' => 'syncKamaho'], ['_method' => 'POST']);
         $routes->resources('Rooms', ['only' => ['index', 'create', 'delete']]);
 

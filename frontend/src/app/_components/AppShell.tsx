@@ -33,6 +33,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return
     }
     if (!isLoggedIn()) {
+      setChecking(false)
       router.replace('/login')
       return
     }
