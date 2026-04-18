@@ -55,6 +55,7 @@ class AuthService
         return [
             'id' => (int)$user->id,
             'name' => (string)$user->name,
+            'login_id' => (string)$user->login_id,
             'role' => (string)$user->role,
             'block_id' => $user->block_id !== null ? (int)$user->block_id : null,
         ];

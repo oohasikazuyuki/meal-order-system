@@ -242,6 +242,7 @@ export const saveBlockOrderQuantities = (data: SaveBlockOrderQuantitiesInput) =>
 export interface AuthUser {
   id: number;
   name: string;
+  login_id: string;
   role: 'admin' | 'user';
   block_id: number | null;
 }
