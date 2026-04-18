@@ -58,6 +58,8 @@ class AuthService
             'login_id' => (string)$user->login_id,
             'role' => (string)$user->role,
             'block_id' => $user->block_id !== null ? (int)$user->block_id : null,
+            'kamaho_login_id' => $user->kamaho_login_id ? (string)$user->kamaho_login_id : null,
+            'has_kamaho_link' => !empty($user->kamaho_login_id) && !empty($user->kamaho_password_enc),
         ];
     }
 

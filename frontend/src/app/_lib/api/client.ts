@@ -1,4 +1,4 @@
-import axios, { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
+import axios, { InternalAxiosRequestConfig } from 'axios';
 
 const client = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost/api',
@@ -87,6 +87,11 @@ export const login = (login_id: string, password: string) =>
   client.post<{ ok: boolean; token: string; user: AuthUser }>('/auth/login', { login_id, password });
 export const logout = () => client.post('/auth/logout');
 export const getMe = () => client.get<{ ok: boolean; user: AuthUser }>('/auth/me');
+export const loginKamahoIntegration = (account: string, password: string) =>
+  client.post<KamahoIntegrationLoginResponse>('/rooms/kamaho-login', { account, password });
+export const getKamahoLink = () => client.get<KamahoLinkResponse>('/auth/kamaho-link');
+export const updateKamahoLink = (data: { kamaho_login_id: string; kamaho_password?: string }) =>
+  withCacheClear(client.put<KamahoLinkResponse>('/auth/kamaho-link', data));
 
 // --- Users ---
 export const fetchUsers = () => client.get<{ ok: boolean; users: UserRecord[] }>('/users');
@@ -243,6 +248,8 @@ export interface AuthUser {
   id: number;
   name: string;
   login_id: string;
+  kamaho_login_id?: string | null;
+  has_kamaho_link?: boolean;
   role: 'admin' | 'user';
   block_id: number | null;
 }
@@ -251,6 +258,8 @@ export interface UserRecord {
   id: number;
   name: string;
   login_id: string;
+  kamaho_login_id?: string | null;
+  has_kamaho_link?: boolean;
   role: 'admin' | 'user';
   block_id: number | null;
   created?: string;
@@ -260,6 +269,8 @@ export interface UserInput {
   name: string;
   login_id?: string;
   password?: string;
+  kamaho_login_id?: string;
+  kamaho_password?: string;
   role: 'admin' | 'user';
   block_id?: number | null;
 }
@@ -416,6 +427,20 @@ export interface KamahoMealCountsResponse {
   date: string;
   /** meal_type (string key) => 食数 */
   counts: Record<string, number>;
+}
+
+export interface KamahoIntegrationLoginResponse {
+  ok: boolean;
+  message: string;
+  room_count: number;
+  kamaho_login_id?: string | null;
+}
+
+export interface KamahoLinkResponse {
+  ok: boolean;
+  kamaho_login_id: string | null;
+  has_kamaho_link: boolean;
+  kamaho_linked_at: string | null;
 }
 
 export interface OrderQuantityItem {

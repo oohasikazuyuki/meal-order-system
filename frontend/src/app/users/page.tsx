@@ -93,6 +93,7 @@ export default function UsersPage() {
                 <th style={th}>名前</th>
                 <th style={th}>ログインID</th>
                 <th style={th}>権限</th>
+                <th style={th}>鎌倉連携ID</th>
                 <th style={th}>担当ブロック</th>
                 <th style={th}>登録日</th>
                 <th style={{ ...th, textAlign: 'center', width: 140 }}>操作</th>
@@ -130,6 +131,9 @@ export default function UsersPage() {
                     }}>
                       {ROLE_LABELS[user.role]}
                     </span>
+                  </td>
+                  <td style={{ ...td, fontFamily: 'monospace', color: '#4b5563' }}>
+                    {user.kamaho_login_id ? user.kamaho_login_id : <span style={{ color: '#9ca3af' }}>未設定</span>}
                   </td>
                   <td style={{ ...td, fontSize: '0.85rem', color: '#374151' }}>
                     {user.role === 'user'
@@ -174,6 +178,8 @@ function UserForm({ initial, blocks, onSuccess, onCancel }: {
   const [name, setName] = useState(initial?.name ?? '')
   const [loginId, setLoginId] = useState(initial?.login_id ?? '')
   const [password, setPassword] = useState('')
+  const [kamahoLoginId, setKamahoLoginId] = useState(initial?.kamaho_login_id ?? '')
+  const [kamahoPassword, setKamahoPassword] = useState('')
   const [role, setRole] = useState<'admin' | 'user'>(initial?.role ?? 'user')
   const [blockId, setBlockId] = useState<number | null>(initial?.block_id ?? null)
   const [saving, setSaving] = useState(false)
@@ -190,10 +196,12 @@ function UserForm({ initial, blocks, onSuccess, onCancel }: {
       const data: UserInput = { 
         name: name.trim(), 
         login_id: loginId.trim(), 
+        kamaho_login_id: kamahoLoginId.trim(),
         role, 
         block_id: role === 'user' ? (blockId ?? null) : null 
       }
       if (password) data.password = password
+      if (kamahoPassword) data.kamaho_password = kamahoPassword
 
       if (isEdit && initial) {
         await updateUser(initial.id, data)
@@ -272,6 +280,31 @@ function UserForm({ initial, blocks, onSuccess, onCancel }: {
               <option value="user">一般</option>
               <option value="admin">管理者</option>
             </select>
+          </div>
+          <div>
+            <label style={labelStyle}>鎌倉連携ID</label>
+            <input
+              type="text"
+              value={kamahoLoginId}
+              onChange={(e) => setKamahoLoginId(e.target.value)}
+              placeholder="例：kamaho-user"
+              style={formInput}
+              autoComplete="username"
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>
+              鎌倉連携パスワード
+              <span style={{ color: '#9ca3af', fontWeight: 400 }}> （変更時のみ）</span>
+            </label>
+            <input
+              type="password"
+              value={kamahoPassword}
+              onChange={(e) => setKamahoPassword(e.target.value)}
+              placeholder="変更しない場合は空欄"
+              style={formInput}
+              autoComplete="new-password"
+            />
           </div>
           {role === 'user' && (
             <div>

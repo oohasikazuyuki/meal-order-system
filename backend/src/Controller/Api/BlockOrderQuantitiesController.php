@@ -3,6 +3,7 @@ namespace App\Controller\Api;
 
 use App\Controller\AppController;
 use App\Service\KamahoApiService;
+use App\Service\KamahoCredentialResolverService;
 
 /**
  * ブロック別発注数量 API
@@ -15,12 +16,15 @@ use App\Service\KamahoApiService;
  */
 class BlockOrderQuantitiesController extends AppController
 {
+    private KamahoCredentialResolverService $kamahoCredentialResolverService;
+
     public function initialize(): void
     {
         parent::initialize();
         $this->Blocks = $this->fetchTable('Blocks');
         $this->BlockOrderQuantities = $this->fetchTable('BlockOrderQuantities');
         $this->Menus = $this->fetchTable('Menus');
+        $this->kamahoCredentialResolverService = new KamahoCredentialResolverService();
     }
 
     /**
@@ -28,6 +32,11 @@ class BlockOrderQuantitiesController extends AppController
      */
     public function index(): void
     {
+        $user = $this->requireAuthenticatedUser();
+        if ($user === null) {
+            return;
+        }
+
         $date = $this->request->getQuery('date', date('Y-m-d'));
 
         // 1. ブロック+部屋+グラム設定
@@ -39,9 +48,19 @@ class BlockOrderQuantitiesController extends AppController
         // 2. kamahoから部屋別食数取得
         $kamahoByRoom = [];
         try {
-            $service      = new KamahoApiService();
+            $service      = $this->buildKamahoServiceFromRequest();
             $kamahoByRoom = $service->getMealCountsByRoomForDate($date);
         } catch (\Throwable $e) {
+            if ($this->hasKamahoCredentialHeaders()) {
+                try {
+                    $kamahoByRoom = (new KamahoApiService())->getMealCountsByRoomForDate($date);
+                } catch (\Throwable) {
+                    // kamaho が取れなくても継続（0扱い）
+                }
+                if (!empty($kamahoByRoom)) {
+                    // フォールバック成功時はこのまま継続
+                }
+            }
             // kamaho が取れなくても継続（0扱い）
         }
 
@@ -188,5 +207,19 @@ class BlockOrderQuantitiesController extends AppController
 
         $this->set(['ok' => true, 'saved' => $saved]);
         $this->viewBuilder()->setOption('serialize', ['ok', 'saved']);
+    }
+
+    private function buildKamahoServiceFromRequest(): KamahoApiService
+    {
+        $options = $this->kamahoCredentialResolverService->resolveKamahoOptions($this->request);
+        return new KamahoApiService($options);
+    }
+
+    private function hasKamahoCredentialHeaders(): bool
+    {
+        if ($this->request->getHeaderLine('X-Kamaho-Login-Account-B64') !== '' && $this->request->getHeaderLine('X-Kamaho-Login-Password-B64') !== '') {
+            return true;
+        }
+        return $this->request->getHeaderLine('X-Kamaho-Login-Account') !== '' && $this->request->getHeaderLine('X-Kamaho-Login-Password') !== '';
     }
 }

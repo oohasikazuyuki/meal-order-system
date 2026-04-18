@@ -6,7 +6,7 @@ import {
   fetchBlocks, createBlock, deleteBlock,
   fetchSuppliers, createSupplier, updateSupplier, deleteSupplier,
   uploadSupplierTemplate, deleteSupplierTemplate, downloadSupplierTemplate,
-  fetchKamahoMealCounts,
+  fetchKamahoMealCounts, loginKamahoIntegration, getKamahoLink, updateKamahoLink,
   type Room, type Block, type Supplier, type SupplierInput,
 } from '../_lib/api/client'
 
@@ -80,6 +80,9 @@ function RoomsTab() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
   const [mealCounts, setMealCounts] = useState<Record<string, Record<string, number>>>({})
   const [loadingMealCounts, setLoadingMealCounts] = useState(false)
+  const [kamahoAccount, setKamahoAccount] = useState('')
+  const [kamahoPassword, setKamahoPassword] = useState('')
+  const [kamahoLoggingIn, setKamahoLoggingIn] = useState(false)
 
   const loadRooms = useCallback(async () => {
     setLoading(true)
@@ -108,6 +111,50 @@ function RoomsTab() {
 
   useEffect(() => { loadRooms() }, [loadRooms])
   useEffect(() => { loadMealCounts() }, [loadMealCounts])
+  useEffect(() => {
+    getKamahoLink()
+      .then((res) => {
+        setKamahoAccount(res.data.kamaho_login_id ?? '')
+      })
+      .catch(() => {})
+  }, [])
+
+  const handleKamahoLogin = async () => {
+    const accountFromDom = typeof document !== 'undefined'
+      ? ((document.getElementById('kamaho-account') as HTMLInputElement | null)?.value ?? '')
+      : ''
+    const passwordFromDom = typeof document !== 'undefined'
+      ? ((document.getElementById('kamaho-password') as HTMLInputElement | null)?.value ?? '')
+      : ''
+    const account = (kamahoAccount || accountFromDom).trim()
+    const password = kamahoPassword || passwordFromDom
+
+    if (!account || !password) {
+      setError('連携ログインIDとパスワードを入力してください')
+      return
+    }
+    setKamahoAccount(account)
+    setKamahoPassword(password)
+    setKamahoLoggingIn(true)
+    setError(null)
+    setSuccessMsg(null)
+    try {
+      const res = await loginKamahoIntegration(account, password)
+      setSuccessMsg(`${res.data.message}（部屋 ${res.data.room_count} 件）`)
+      loadMealCounts()
+    } catch (e) {
+      setError(getApiErrorMessage(e, 'kamaho 連携ログインに失敗しました'))
+    } finally {
+      setKamahoLoggingIn(false)
+    }
+  }
+
+  const handleKamahoCredentialClear = () => {
+    updateKamahoLink({ kamaho_login_id: '' }).catch(() => {})
+    setKamahoAccount('')
+    setKamahoPassword('')
+    setSuccessMsg('kamaho 連携ログイン情報をクリアしました')
+  }
 
   const handleSync = async () => {
     setSyncing(true)
@@ -125,8 +172,8 @@ function RoomsTab() {
       }
       // 食数も再取得
       loadMealCounts()
-    } catch {
-      setError('kamaho との同期に失敗しました。接続設定を確認してください。')
+    } catch (e) {
+      setError(getApiErrorMessage(e, 'kamaho との同期に失敗しました。接続設定を確認してください。'))
     } finally {
       setSyncing(false)
     }
@@ -192,6 +239,50 @@ function RoomsTab() {
       <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #f1f5f9', background: '#f8fafc' }}>
         <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.6rem' }}>
           食数管理システム（kamaho）から同期
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto auto', gap: '0.5rem', alignItems: 'center', marginBottom: '0.75rem' }}>
+          <input
+            id="kamaho-account"
+            type="text"
+            value={kamahoAccount}
+            onChange={(e) => setKamahoAccount(e.target.value)}
+            onInput={(e) => setKamahoAccount((e.target as HTMLInputElement).value)}
+            placeholder="連携ログインID"
+            autoComplete="username"
+            style={inputStyle}
+          />
+          <input
+            id="kamaho-password"
+            type="password"
+            value={kamahoPassword}
+            onChange={(e) => setKamahoPassword(e.target.value)}
+            onInput={(e) => setKamahoPassword((e.target as HTMLInputElement).value)}
+            placeholder="連携パスワード"
+            autoComplete="current-password"
+            style={inputStyle}
+          />
+          <button
+            onClick={handleKamahoLogin}
+            disabled={kamahoLoggingIn}
+            style={primaryBtn(kamahoLoggingIn)}
+          >
+            {kamahoLoggingIn ? 'ログイン中...' : '連携ログイン'}
+          </button>
+          <button
+            onClick={handleKamahoCredentialClear}
+            style={{
+              padding: '0.55rem 0.9rem',
+              border: '1px solid #d1d5db',
+              borderRadius: 8,
+              background: '#fff',
+              color: '#6b7280',
+              cursor: 'pointer',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+            }}
+          >
+            クリア
+          </button>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <div style={{ fontSize: '0.85rem', color: '#9ca3af', flex: 1 }}>

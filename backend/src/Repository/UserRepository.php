@@ -25,6 +25,11 @@ class UserRepository
         return $this->Users->find()->where(['api_token' => $token])->first();
     }
 
+    public function findById(int $id)
+    {
+        return $this->Users->find()->where(['id' => $id])->first();
+    }
+
     public function findAll(array $options = []): array
     {
         $query = $this->Users->find();
