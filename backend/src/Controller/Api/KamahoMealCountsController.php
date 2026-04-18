@@ -3,6 +3,7 @@ namespace App\Controller\Api;
 
 use App\Controller\AppController;
 use App\Service\KamahoApiService;
+use App\Service\KamahoCredentialResolverService;
 
 /**
  * kamaho-shokusu.jp から食数を取得するプロキシエンドポイント
@@ -13,6 +14,13 @@ use App\Service\KamahoApiService;
  */
 class KamahoMealCountsController extends AppController
 {
+    private KamahoCredentialResolverService $kamahoCredentialResolverService;
+
+    public function initialize(): void
+    {
+        parent::initialize();
+        $this->kamahoCredentialResolverService = new KamahoCredentialResolverService();
+    }
 
     /** GET /api/kamaho-meal-counts.json */
     public function index(): void
@@ -32,8 +40,15 @@ class KamahoMealCountsController extends AppController
         }
 
         try {
-            $service = new KamahoApiService();
-            $counts  = $service->getMealCountsByDate($date);
+            $service = $this->buildKamahoServiceFromRequest();
+            try {
+                $counts  = $service->getMealCountsByDate($date);
+            } catch (\RuntimeException $e) {
+                if (!$this->hasKamahoCredentialHeaders()) {
+                    throw $e;
+                }
+                $counts = (new KamahoApiService())->getMealCountsByDate($date);
+            }
 
             $this->set([
                 'ok'     => true,
@@ -50,5 +65,19 @@ class KamahoMealCountsController extends AppController
             ]);
             $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
         }
+    }
+
+    private function buildKamahoServiceFromRequest(): KamahoApiService
+    {
+        $options = $this->kamahoCredentialResolverService->resolveKamahoOptions($this->request);
+        return new KamahoApiService($options);
+    }
+
+    private function hasKamahoCredentialHeaders(): bool
+    {
+        if ($this->request->getHeaderLine('X-Kamaho-Login-Account-B64') !== '' && $this->request->getHeaderLine('X-Kamaho-Login-Password-B64') !== '') {
+            return true;
+        }
+        return $this->request->getHeaderLine('X-Kamaho-Login-Account') !== '' && $this->request->getHeaderLine('X-Kamaho-Login-Password') !== '';
     }
 }
