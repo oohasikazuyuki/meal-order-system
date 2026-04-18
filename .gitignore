@@ -18,3 +18,4 @@ backend/logs/
 frontend/.next
 .idea
 /frontend/node_modules/
+/backend/.phpunit.cache/test-results

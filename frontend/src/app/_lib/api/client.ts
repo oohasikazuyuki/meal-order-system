@@ -154,6 +154,19 @@ export const fetchSuppliers = () => client.get<{ ok: boolean; suppliers: Supplie
 export const createSupplier = (data: SupplierInput) => withCacheClear(client.post<{ ok: boolean; supplier: Supplier }>('/suppliers', data));
 export const updateSupplier = (id: number, data: SupplierInput) => withCacheClear(client.put<{ ok: boolean; supplier: Supplier }>(`/suppliers/${id}`, data));
 export const deleteSupplier = (id: number) => withCacheClear(client.delete(`/suppliers/${id}`));
+export const uploadSupplierTemplate = (id: number, file: File) => {
+  const form = new FormData();
+  form.append('template', file);
+  return withCacheClear(client.post<{ ok: boolean; message: string; has_custom_template: boolean }>(
+    `/suppliers/${id}/template`,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  ));
+};
+export const deleteSupplierTemplate = (id: number) =>
+  withCacheClear(client.delete<{ ok: boolean; message: string; has_custom_template: boolean }>(`/suppliers/${id}/template`));
+export const downloadSupplierTemplate = (id: number) =>
+  client.get(`/suppliers/${id}/template`, { responseType: 'blob' });
 
 // --- Order Sheets ---
 export const fetchOrderSheetPreview = (weekStart: string) =>
@@ -530,6 +543,7 @@ export interface Supplier {
   delivery_lead_weeks: 0 | 1;
   file_ext: string;
   notes: string | null;
+  has_custom_template: boolean;
 }
 
 export interface SupplierInput {

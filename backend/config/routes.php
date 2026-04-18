@@ -44,6 +44,10 @@ return static function (RouteBuilder $routes): void {
         $routes->resources('MenuMasters', ['only' => ['index', 'create', 'update', 'delete']]);
 
         $routes->resources('Suppliers', ['only' => ['index', 'create', 'update', 'delete']]);
+        // 仕入先テンプレート操作（resourcesより前に定義してマッチ優先度を確保）
+        $routes->connect('/suppliers/:id/template', ['controller' => 'Suppliers', 'action' => 'uploadTemplate'],   ['_method' => 'POST',   'pass' => ['id']]);
+        $routes->connect('/suppliers/:id/template', ['controller' => 'Suppliers', 'action' => 'deleteTemplate'],   ['_method' => 'DELETE', 'pass' => ['id']]);
+        $routes->connect('/suppliers/:id/template', ['controller' => 'Suppliers', 'action' => 'downloadTemplate'], ['_method' => 'GET',    'pass' => ['id']]);
 
         $routes->connect('/order-sheets/calculate',  ['controller' => 'OrderSheets', 'action' => 'calculate'],  ['_method' => 'GET']);
         $routes->connect('/order-sheets/inventory',  ['controller' => 'OrderSheets', 'action' => 'inventory'],  ['_method' => 'GET']);
