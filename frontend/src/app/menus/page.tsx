@@ -929,7 +929,7 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
         setError('AI提案を反映できませんでした')
       }
     } catch {
-      setError('AI提案の取得に失敗しました（Ollama起動状態を確認してください）')
+      setError('AI提案の取得に失敗しました（AIプロバイダの設定を確認してください）')
     } finally {
       setAiSuggesting(false)
     }

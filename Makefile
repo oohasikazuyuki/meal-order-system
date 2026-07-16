@@ -4,7 +4,7 @@
 help:
 	@echo "Usage: make <target>"
 	@echo ""
-	@echo "  setup            初回セットアップ (.env 生成 / Docker 起動 / マイグレーション / Ollama pull)"
+	@echo "  setup            初回セットアップ (.env 生成 / Docker 起動 / マイグレーション)"
 	@echo "  up               コンテナを起動"
 	@echo "  down             コンテナを停止・削除"
 	@echo "  restart          コンテナを再起動"

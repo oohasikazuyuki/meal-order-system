@@ -421,7 +421,7 @@ function MenuMasterForm({ initial, blocks, suppliers, onSuccess, onCancel }: {
         setAiInfo('AIが料理名を生成しました。必要なら編集してください。')
       }
     } catch {
-      setError('AI下書きの取得に失敗しました（Ollama起動状態を確認してください）')
+      setError('AI下書きの取得に失敗しました（AIプロバイダの設定を確認してください）')
     } finally {
       setAiLoading(false)
     }

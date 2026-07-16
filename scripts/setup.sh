@@ -29,15 +29,6 @@ echo ""
 echo "[setup] マイグレーションを実行します..."
 docker compose exec -T backend php /var/www/html/migrate.php
 
-# ─── 4. Ollama モデル pull ────────────────────────────────────────────────────
-OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:1.5b-instruct-q4_K_S}"
-echo "[setup] Ollama モデル ($OLLAMA_MODEL) を pull します..."
-if docker compose exec -T ollama ollama list | grep -q "$OLLAMA_MODEL"; then
-  echo "[setup] モデルは既に存在します。スキップします。"
-else
-  docker compose exec -T ollama ollama pull "$OLLAMA_MODEL"
-fi
-
 echo ""
 echo "[setup] セットアップ完了！"
 echo "  フロントエンド: http://localhost:${FRONTEND_PORT:-3000}"
