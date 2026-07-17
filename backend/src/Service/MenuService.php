@@ -37,7 +37,9 @@ class MenuService
     }
 
     /**
-     * メニュー登録（date+meal_typeでupsert）
+     * メニュー登録（date+meal_type+block_id+nameでupsert）
+     * 同じ名前のメニューが既にあればパッチ、なければ新規作成。
+     * これにより同日・同食事種別・同ブロックに複数メニューを登録できる。
      */
     public function saveMenu(array $data): array
     {
@@ -49,13 +51,15 @@ class MenuService
         $menuDate = $data['menu_date'] ?? null;
         $mealType = isset($data['meal_type']) ? (int)$data['meal_type'] : null;
         $blockId = isset($data['block_id']) ? (int)$data['block_id'] : null;
+        $name = isset($data['name']) ? trim((string)$data['name']) : '';
 
         $existing = null;
-        if ($menuDate && $mealType && $blockId) {
-            $existing = $this->menuRepository->findByDateMealTypeAndBlock(
+        if ($menuDate && $mealType && $blockId && $name !== '') {
+            $existing = $this->menuRepository->findByDateMealTypeBlockAndName(
                 $menuDate,
                 $mealType,
-                $blockId
+                $blockId,
+                $name
             );
         }
 

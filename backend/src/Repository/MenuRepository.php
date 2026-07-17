@@ -61,6 +61,18 @@ class MenuRepository
             ->first();
     }
 
+    public function findByDateMealTypeBlockAndName(string $menuDate, int $mealType, int $blockId, string $name)
+    {
+        return $this->Menus->find()
+            ->where([
+                'menu_date' => $menuDate,
+                'meal_type' => $mealType,
+                'block_id' => $blockId,
+                'name' => $name,
+            ])
+            ->first();
+    }
+
     public function save($entity): bool
     {
         return (bool)$this->Menus->save($entity);
