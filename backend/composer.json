@@ -1,6 +1,7 @@
 {
     "name": "meal-order/backend",
     "description": "Meal Order System - CakePHP Backend",
+    "license": "proprietary",
     "require": {
         "php": ">=8.1",
         "cakephp/cakephp": "^5.0",
