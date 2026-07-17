@@ -51,12 +51,6 @@ class AiController extends AppController
         $existingByMeal = (array)($this->request->getData('existing_by_meal') ?? []);
 
         $candidates = $this->fetchCandidateMenuNames($blockId);
-        if (empty($candidates)) {
-            $this->response = $this->response->withStatus(400);
-            $this->set(['ok' => false, 'message' => '提案対象のメニューマスタがありません']);
-            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
-            return;
-        }
 
         [$suggestions, $rawText] = $this->generateSuggestionsWithOllama($date, $candidates, $existingByMeal);
         if ($suggestions === null) {
@@ -150,7 +144,7 @@ class AiController extends AppController
     private function generateSuggestionsWithOllama(string $date, array $candidates, array $existingByMeal): array
     {
         $season = $this->seasonLabel($date);
-        $candidateSet = array_fill_keys($candidates, true);
+        $existingNames = $this->collectExistingMenuNames($existingByMeal);
 
         $existingText = [];
         foreach ([1, 2, 3, 4] as $mt) {
@@ -159,31 +153,37 @@ class AiController extends AppController
             $existingText[] = "{$mt}: " . (empty($vals) ? 'なし' : implode('、', $vals));
         }
 
+        $referenceMenus = empty($candidates)
+            ? 'なし'
+            : implode('、', array_slice($candidates, 0, 30));
+
         $prompt = implode("\n", [
             "あなたは保育施設の献立提案アシスタントです。",
             "日付: {$date}（{$season}）",
             "食事種別: 1=朝食, 2=昼食, 3=夕食, 4=おやつ",
-            "既存メニュー:",
+            "この日の既存献立（同じ名前は使わないこと）:",
             implode("\n", $existingText),
-            "候補メニュー（この中からのみ選ぶこと）:",
-            implode('、', array_slice($candidates, 0, 20)),
+            "過去の献立例（参考のみ。そのまま選ばず、新しいメニュー名を考えること）:",
+            $referenceMenus,
+            "各食事種別に、保育施設向けの新しい献立名を1つずつ考えてください。",
+            "メニューマスタに無い新規の料理名で構いません。",
+            "献立名は日本語で20文字以内、具体的な料理名にしてください。",
             "出力はJSONのみ。形式:",
             '{"suggestions":{"1":["..."],"2":["..."],"3":["..."],"4":["..."]}}',
-            "各食事は最大1件。既存メニュー名は避ける。",
+            "各食事は最大1件。",
         ]);
 
-        $res = $this->callOllama($prompt, 120, ['num_predict' => 160, 'num_ctx' => 768, 'temperature' => 0.2]);
+        $res = $this->callOllama($prompt, 120, ['num_predict' => 160, 'num_ctx' => 768, 'temperature' => 0.7]);
         if (!$res['ok']) {
-            // 1回だけ短縮プロンプトで再試行
             $retryPrompt = implode("\n", [
-                "次の候補から、朝昼夕おやつを1件ずつ選びJSONだけ返す。",
-                "候補: " . implode('、', array_slice($candidates, 0, 12)),
+                "保育施設向けに、朝食・昼食・夕食・おやつの新しい献立名を1件ずつ考えてJSONだけ返してください。",
+                "既存献立: " . (empty($existingNames) ? 'なし' : implode('、', array_slice($existingNames, 0, 12))),
                 '{"suggestions":{"1":["..."],"2":["..."],"3":["..."],"4":["..."]}}',
             ]);
-            $res = $this->callOllama($retryPrompt, 80, ['num_predict' => 120, 'num_ctx' => 512, 'temperature' => 0.1]);
+            $res = $this->callOllama($retryPrompt, 80, ['num_predict' => 120, 'num_ctx' => 512, 'temperature' => 0.5]);
         }
         if (!$res['ok']) {
-            return [$this->fallbackSuggestions($date, $candidates, $existingByMeal), 'fallback:no_response'];
+            return [null, ''];
         }
 
         $rawText = trim((string)($res['text'] ?? ''));
@@ -193,27 +193,82 @@ class AiController extends AppController
         }
         if (is_array($parsed)) {
             $rawSuggestions = (array)($parsed['suggestions'] ?? []);
-            $normalized = [];
-            foreach ([1, 2, 3, 4] as $mt) {
-                $vals = isset($rawSuggestions[(string)$mt]) ? (array)$rawSuggestions[(string)$mt] : (array)($rawSuggestions[$mt] ?? []);
-                $filtered = [];
-                foreach ($vals as $name) {
-                    $name = trim((string)$name);
-                    if ($name === '' || !isset($candidateSet[$name])) continue;
-                    $filtered[$name] = true;
-                    if (count($filtered) >= 1) break;
-                }
-                $normalized[(string)$mt] = array_keys($filtered);
+            $normalized = $this->normalizeAiSuggestions($rawSuggestions, $existingByMeal);
+            if ($this->hasAnySuggestion($normalized)) {
+                return [$normalized, $rawText];
             }
-            return [$normalized, $rawText];
         }
 
-        $loose = $this->extractSuggestionsFromPartialText($rawText, $candidateSet);
+        $loose = $this->extractSuggestionsFromPartialText($rawText, $existingByMeal);
         if ($loose !== null) {
             return [$loose, $rawText];
         }
 
-        return [$this->fallbackSuggestions($date, $candidates, $existingByMeal), $rawText];
+        return [null, $rawText];
+    }
+
+    private function collectExistingMenuNames(array $existingByMeal): array
+    {
+        $names = [];
+        foreach ([1, 2, 3, 4] as $mt) {
+            $vals = isset($existingByMeal[(string)$mt]) ? (array)$existingByMeal[(string)$mt] : (array)($existingByMeal[$mt] ?? []);
+            foreach ($vals as $name) {
+                $name = trim((string)$name);
+                if ($name !== '') {
+                    $names[$name] = true;
+                }
+            }
+        }
+        return array_keys($names);
+    }
+
+    private function normalizeAiSuggestions(array $rawSuggestions, array $existingByMeal): array
+    {
+        $normalized = [];
+        $usedInDay = [];
+        foreach ([1, 2, 3, 4] as $mt) {
+            $existingForMeal = array_fill_keys($this->collectMealMenuNames($existingByMeal, $mt), true);
+            $vals = isset($rawSuggestions[(string)$mt]) ? (array)$rawSuggestions[(string)$mt] : (array)($rawSuggestions[$mt] ?? []);
+            $filtered = [];
+            foreach ($vals as $name) {
+                $name = $this->normalizeSuggestionName((string)$name);
+                if ($name === '') continue;
+                if (isset($existingForMeal[$name]) || isset($usedInDay[$name])) continue;
+                $filtered[$name] = true;
+                $usedInDay[$name] = true;
+                if (count($filtered) >= 1) break;
+            }
+            $normalized[(string)$mt] = array_keys($filtered);
+        }
+        return $normalized;
+    }
+
+    private function collectMealMenuNames(array $existingByMeal, int $mealType): array
+    {
+        $vals = isset($existingByMeal[(string)$mealType]) ? (array)$existingByMeal[(string)$mealType] : (array)($existingByMeal[$mealType] ?? []);
+        return array_values(array_filter(array_map(fn($v) => trim((string)$v), $vals), fn($v) => $v !== ''));
+    }
+
+    private function normalizeSuggestionName(string $name): string
+    {
+        $name = trim(preg_replace('/\s+/u', ' ', $name) ?? '');
+        if ($name === '') {
+            return '';
+        }
+        if (mb_strlen($name) > 40) {
+            $name = mb_substr($name, 0, 40);
+        }
+        return $name;
+    }
+
+    private function hasAnySuggestion(array $suggestions): bool
+    {
+        foreach ($suggestions as $vals) {
+            if (!empty($vals)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function generateMenuMasterDraftWithOllama(string $name, array $candidates, array $suppliers): array
@@ -344,7 +399,7 @@ class AiController extends AppController
 
     private function callOllama(string $prompt, int $timeoutSec = 90, array $options = []): array
     {
-        $provider = strtolower((string)(getenv('AI_PROVIDER') ?: 'ollama'));
+        $provider = strtolower((string)(getenv('AI_PROVIDER') ?: 'openrouter'));
         if ($provider === 'openrouter') {
             return $this->callOpenRouter($prompt, $timeoutSec, $options);
         }
@@ -409,16 +464,21 @@ class AiController extends AppController
         }
 
         $baseUrl = rtrim((string)(getenv('OPENROUTER_BASE_URL') ?: 'https://openrouter.ai/api/v1'), '/');
-        $model = (string)(getenv('OPENROUTER_MODEL') ?: 'qwen/qwen3-4b:free');
+        $model = (string)(getenv('OPENROUTER_MODEL') ?: 'openai/gpt-oss-20b:free');
         $siteUrl = (string)(getenv('OPENROUTER_SITE_URL') ?: 'http://localhost');
         $appName = (string)(getenv('OPENROUTER_APP_NAME') ?: 'meal-order-system');
         $url = $baseUrl . '/chat/completions';
 
-        $maxTokens = isset($options['num_predict']) ? max(64, (int)$options['num_predict']) : 256;
+        // gpt-oss 系は推論トークンを消費するため余裕を持たせる
+        $maxTokens = isset($options['num_predict']) ? max(512, (int)$options['num_predict'] * 4) : 1024;
         $temperature = isset($options['temperature']) ? (float)$options['temperature'] : 0.4;
         $payload = [
             'model' => $model,
             'messages' => [
+                [
+                    'role' => 'system',
+                    'content' => 'あなたは保育施設向け献立アシスタントです。指示どおりJSONのみを返してください。新しい献立名を考える場合も、説明文やMarkdownは不要です。',
+                ],
                 ['role' => 'user', 'content' => $prompt],
             ],
             'temperature' => $temperature,
@@ -448,7 +508,8 @@ class AiController extends AppController
 
             if ($errno === 0 && $status >= 200 && $status < 300 && is_string($body)) {
                 $decoded = json_decode($body, true);
-                $content = (string)($decoded['choices'][0]['message']['content'] ?? '');
+                $message = $decoded['choices'][0]['message'] ?? [];
+                $content = $this->extractOpenRouterContent(is_array($message) ? $message : []);
                 if ($content !== '') {
                     return ['ok' => true, 'text' => $content];
                 }
@@ -462,6 +523,46 @@ class AiController extends AppController
         }
 
         return ['ok' => false, 'text' => ''];
+    }
+
+    /**
+     * OpenRouter / reasoning モデルの応答から本文テキストを取り出す
+     */
+    private function extractOpenRouterContent(array $message): string
+    {
+        $content = $message['content'] ?? '';
+        if (is_string($content) && trim($content) !== '') {
+            return trim($content);
+        }
+        if (is_array($content)) {
+            $parts = [];
+            foreach ($content as $part) {
+                if (is_string($part)) {
+                    $parts[] = $part;
+                    continue;
+                }
+                if (!is_array($part)) {
+                    continue;
+                }
+                $text = $part['text'] ?? $part['content'] ?? '';
+                if (is_string($text) && $text !== '') {
+                    $parts[] = $text;
+                }
+            }
+            $joined = trim(implode("\n", $parts));
+            if ($joined !== '') {
+                return $joined;
+            }
+        }
+
+        foreach (['reasoning', 'reasoning_content', 'refusal'] as $key) {
+            $alt = $message[$key] ?? '';
+            if (is_string($alt) && trim($alt) !== '') {
+                return trim($alt);
+            }
+        }
+
+        return '';
     }
 
     private function callGroq(string $prompt, int $timeoutSec = 90, array $options = []): array
@@ -533,31 +634,20 @@ class AiController extends AppController
         return is_array($decoded) ? $decoded : null;
     }
 
-    private function extractSuggestionsFromPartialText(string $text, array $candidateSet): ?array
+    private function extractSuggestionsFromPartialText(string $text, array $existingByMeal): ?array
     {
-        $out = [];
+        $rawSuggestions = [];
         foreach ([1, 2, 3, 4] as $mt) {
-            $matched = preg_match('/"' . $mt . '"\s*:\s*\[\s*"([^"]+)"/u', $text, $m);
-            if (!$matched) {
-                $out[(string)$mt] = [];
-                continue;
+            if (preg_match('/"' . $mt . '"\s*:\s*\[\s*"([^"]+)"/u', $text, $m)) {
+                $rawSuggestions[(string)$mt] = [trim((string)$m[1])];
             }
-            $name = trim((string)$m[1]);
-            if ($name === '' || !isset($candidateSet[$name])) {
-                $out[(string)$mt] = [];
-                continue;
-            }
-            $out[(string)$mt] = [$name];
+        }
+        if (empty($rawSuggestions)) {
+            return null;
         }
 
-        $hasAny = false;
-        foreach ($out as $vals) {
-            if (!empty($vals)) {
-                $hasAny = true;
-                break;
-            }
-        }
-        return $hasAny ? $out : null;
+        $normalized = $this->normalizeAiSuggestions($rawSuggestions, $existingByMeal);
+        return $this->hasAnySuggestion($normalized) ? $normalized : null;
     }
 
     private function seasonLabel(string $date): string
@@ -579,27 +669,5 @@ class AiController extends AppController
         }
         $dt = DateTime::createFromFormat('Y-m-d', $date);
         return $dt && $dt->format('Y-m-d') === $date;
-    }
-
-    private function fallbackSuggestions(string $date, array $candidates, array $existingByMeal): array
-    {
-        $result = [];
-        $count = max(1, count($candidates));
-        foreach ([1, 2, 3, 4] as $mt) {
-            $vals = isset($existingByMeal[(string)$mt]) ? (array)$existingByMeal[(string)$mt] : (array)($existingByMeal[$mt] ?? []);
-            $existing = array_fill_keys(array_filter(array_map(fn($v) => trim((string)$v), $vals), fn($v) => $v !== ''), true);
-
-            $base = abs(crc32($date . ':' . $mt)) % $count;
-            $picked = '';
-            for ($i = 0; $i < $count; $i++) {
-                $idx = ($base + $i) % $count;
-                $name = trim((string)($candidates[$idx] ?? ''));
-                if ($name === '' || isset($existing[$name])) continue;
-                $picked = $name;
-                break;
-            }
-            $result[(string)$mt] = $picked === '' ? [] : [$picked];
-        }
-        return $result;
     }
 }

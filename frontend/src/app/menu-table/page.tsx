@@ -32,25 +32,32 @@ function formatDate(dateStr: string): string {
 
 const DOW_LABELS = ['月', '火', '水', '木', '金', '土', '日']
 
-// 仕入れ先コードごとの色パレット
-const SUPPLIER_COLORS: { bg: string; color: string }[] = [
-  { bg: '#e0f2fe', color: '#0369a1' }, // 水色
-  { bg: '#fce7f3', color: '#9d174d' }, // ピンク
-  { bg: '#d1fae5', color: '#065f46' }, // 緑
-  { bg: '#fef3c7', color: '#92400e' }, // 黄
-  { bg: '#ede9fe', color: '#5b21b6' }, // 紫
-  { bg: '#fee2e2', color: '#991b1b' }, // 赤
-  { bg: '#ffedd5', color: '#9a3412' }, // オレンジ
-  { bg: '#f0fdf4', color: '#166534' }, // エメラルド
+// 発注先コードごとの固定色（PDFメモ欄と揃える）
+const SUPPLIER_COLOR_MAP: Record<string, { bg: string; color: string; border: string }> = {
+  C: { bg: '#fef3c7', color: '#92400e', border: '#f59e0b' }, // COOP
+  Y: { bg: '#d1fae5', color: '#065f46', border: '#34d399' }, // 八百喜
+  M: { bg: '#fee2e2', color: '#991b1b', border: '#f87171' }, // 河野
+  F: { bg: '#e0f2fe', color: '#0369a1', border: '#38bdf8' }, // 魚丹
+  S: { bg: '#dbeafe', color: '#1e3a8a', border: '#60a5fa' }, // スーパー
+  Z: { bg: '#f3f4f6', color: '#4b5563', border: '#d1d5db' }, // 在庫
+}
+
+const FALLBACK_SUPPLIER_COLORS: { bg: string; color: string; border: string }[] = [
+  { bg: '#ede9fe', color: '#5b21b6', border: '#a78bfa' },
+  { bg: '#ffedd5', color: '#9a3412', border: '#fb923c' },
+  { bg: '#fce7f3', color: '#9d174d', border: '#f472b6' },
+  { bg: '#f0fdf4', color: '#166534', border: '#4ade80' },
 ]
 
-function getSupplierColor(supplierCode: string): { bg: string; color: string } {
-  if (!supplierCode) return SUPPLIER_COLORS[0]
+function getSupplierColor(supplierCode: string): { bg: string; color: string; border: string } {
+  const code = (supplierCode || '').toUpperCase()
+  if (code && SUPPLIER_COLOR_MAP[code]) return SUPPLIER_COLOR_MAP[code]
+  if (!code) return { bg: '#f8fafc', color: '#64748b', border: '#e2e8f0' }
   let hash = 0
-  for (let i = 0; i < supplierCode.length; i++) {
-    hash = (hash * 31 + supplierCode.charCodeAt(i)) % SUPPLIER_COLORS.length
+  for (let i = 0; i < code.length; i++) {
+    hash = (hash * 31 + code.charCodeAt(i)) % FALLBACK_SUPPLIER_COLORS.length
   }
-  return SUPPLIER_COLORS[Math.abs(hash)]
+  return FALLBACK_SUPPLIER_COLORS[Math.abs(hash)]
 }
 
 // PDF モーダルの状態
@@ -236,6 +243,25 @@ export default function MenuTablePage() {
 
         <div style={{ flex: 1 }} />
 
+        {/* 発注先カラー凡例（職員用） */}
+        {viewType === 'staff' && (
+          <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
+            {Object.entries({
+              C: 'COOP', Y: '八百喜', M: '河野', F: '魚丹', S: 'スーパー', Z: '在庫',
+            }).map(([code, label]) => {
+              const sc = getSupplierColor(code)
+              return (
+                <span key={code} style={{
+                  background: sc.bg, color: sc.color, border: `1px solid ${sc.border}`,
+                  padding: '0.15rem 0.45rem', borderRadius: 4, fontSize: '0.78rem', fontWeight: 700,
+                }}>
+                  {code}:{label}
+                </span>
+              )
+            })}
+          </div>
+        )}
+
         {/* 印刷ボタン */}
         <button
           onClick={() => handlePrint('staff')}
@@ -299,8 +325,8 @@ function WeekGrid({
   return (
     <div style={{
       display: 'grid',
-      gridTemplateColumns: `repeat(7, minmax(160px, 1fr))`,
-      gap: '0.75rem',
+      gridTemplateColumns: `repeat(7, minmax(220px, 1fr))`,
+      gap: '1rem',
     }}>
       {[0, 1, 2, 3, 4, 5, 6].map(i => (
         <DayColumn key={i} dayIndex={i} dayData={days[i]} viewType={viewType} />
@@ -331,14 +357,14 @@ function DayColumn({
     }}>
       {/* 曜日ヘッダー */}
       <div style={{
-        padding: '0.5rem 0.75rem',
+        padding: '0.7rem 0.85rem',
         background: 'linear-gradient(135deg, #1a3a5c, #2563eb)',
-        color: '#fff', fontWeight: 700, fontSize: '0.9rem',
+        color: '#fff', fontWeight: 700, fontSize: '1.05rem',
         textAlign: 'center',
       }}>
         {DOW_LABELS[dayIndex]}曜日
         {dateStr && (
-          <div style={{ fontSize: '0.78rem', fontWeight: 400, opacity: 0.85, marginTop: 2 }}>
+          <div style={{ fontSize: '0.92rem', fontWeight: 500, opacity: 0.9, marginTop: 4 }}>
             {formatDate(dateStr)}
           </div>
         )}
@@ -386,68 +412,100 @@ function MealBlock({
     <div style={{ borderTop: '1px solid #f1f5f9' }}>
       {/* 食事種別ラベル */}
       <div style={{
-        padding: '0.25rem 0.75rem',
+        padding: '0.4rem 0.85rem',
         background: mealColors[mealType] ?? '#f9fafb',
         borderBottom: `1px solid ${mealBorders[mealType] ?? '#e5e7eb'}`,
-        fontSize: '0.75rem', fontWeight: 700,
+        fontSize: '0.9rem', fontWeight: 700,
         color: mealTextColors[mealType] ?? '#374151',
       }}>
         {MEAL_TYPE_LABELS[mealType]}
       </div>
 
       {/* メニューリスト */}
-      <div style={{ padding: '0.4rem 0.6rem' }}>
+      <div style={{ padding: '0.55rem 0.7rem' }}>
         {displayMenus.map((menu, mi) => {
           const isEatingOut = menu.menu_name.startsWith('外食')
           return (
-            <div key={mi} style={{ marginBottom: mi < displayMenus.length - 1 ? '0.4rem' : 0 }}>
+            <div key={mi} style={{ marginBottom: mi < displayMenus.length - 1 ? '0.65rem' : 0 }}>
               {isEatingOut ? (
                 /* 外食メニュー: 特別スタイル */
                 <div style={{
-                  display: 'flex', alignItems: 'center', gap: '0.3rem',
+                  display: 'flex', alignItems: 'center', gap: '0.35rem',
                   background: '#fff7ed', border: '1px solid #fdba74',
-                  borderRadius: 5, padding: '0.25rem 0.5rem',
+                  borderRadius: 6, padding: '0.4rem 0.6rem',
                 }}>
-                  <span style={{ fontSize: '0.9rem' }}>🍽</span>
-                  <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#9a3412' }}>
+                  <span style={{ fontSize: '1rem' }}>🍽</span>
+                  <span style={{
+                    fontSize: '1rem', fontWeight: 700, color: '#9a3412',
+                    lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                  }}>
                     {menu.menu_name}
                   </span>
                 </div>
               ) : (
                 <>
-                  {/* 献立名 */}
-                  <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#1a202c', marginBottom: viewType === 'staff' && menu.ingredients.length > 0 ? '0.15rem' : 0 }}>
+                  {/* 献立名（長い場合は2行まで改行） */}
+                  <div style={{
+                    fontSize: '1.05rem', fontWeight: 700, color: '#0f172a',
+                    lineHeight: 1.35, marginBottom: viewType === 'staff' && menu.ingredients.length > 0 ? '0.35rem' : 0,
+                    display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden', wordBreak: 'break-word',
+                  }}>
                     {menu.menu_name}
                   </div>
 
                   {/* 食材（職員用のみ） */}
-                  {viewType === 'staff' && menu.ingredients.map((ing, ii) => (
-                    <div key={ii} style={{
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-                      fontSize: '0.82rem', color: '#6b7280',
-                      borderBottom: ii < menu.ingredients.length - 1 ? '1px dashed #f3f4f6' : 'none',
-                      padding: '0.1rem 0 0.1rem 0.75rem',
-                    }}>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '0.25rem', flex: 1 }}>
-                        {ing.name}
-                      </span>
-                      <span style={{ whiteSpace: 'nowrap', flexShrink: 0, marginRight: '0.25rem' }}>
-                        {ing.amount % 1 === 0 ? ing.amount : ing.amount.toFixed(2)}{ing.unit}
-                      </span>
-                      {ing.supplier_code && (() => {
-                        const sc = getSupplierColor(ing.supplier_code)
-                        return (
-                          <span style={{
-                            background: sc.bg, color: sc.color,
-                            padding: '0.05rem 0.4rem', borderRadius: 3, fontSize: '0.8rem', fontWeight: 700,
-                            flexShrink: 0,
-                          }}>
-                            {ing.supplier_code}
-                          </span>
-                        )
-                      })()}
-                    </div>
-                  ))}
+                  {viewType === 'staff' && menu.ingredients.map((ing, ii) => {
+                    const sc = getSupplierColor(ing.supplier_code)
+                    return (
+                      <div key={ii} style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr auto',
+                        gap: '0.25rem 0.5rem',
+                        fontSize: '0.95rem',
+                        borderBottom: ii < menu.ingredients.length - 1 ? '1px dashed #e5e7eb' : 'none',
+                        padding: '0.35rem 0.15rem',
+                      }}>
+                        <span style={{
+                          color: '#1f2937', fontWeight: 600, lineHeight: 1.35,
+                          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden', wordBreak: 'break-word',
+                        }}>
+                          {ing.name}
+                        </span>
+                        <span style={{
+                          whiteSpace: 'nowrap', flexShrink: 0, fontWeight: 700,
+                          color: '#334155', fontSize: '0.95rem', textAlign: 'right',
+                        }}>
+                          {ing.amount % 1 === 0 ? ing.amount : ing.amount.toFixed(2)}{ing.unit}
+                        </span>
+                        <div style={{
+                          gridColumn: '1 / -1', display: 'flex', alignItems: 'center',
+                          gap: '0.4rem', flexWrap: 'wrap',
+                        }}>
+                          {ing.supplier_code && (
+                            <span style={{
+                              background: sc.bg, color: sc.color, border: `1.5px solid ${sc.border}`,
+                              padding: '0.12rem 0.45rem', borderRadius: 4,
+                              fontSize: '0.85rem', fontWeight: 800, letterSpacing: '0.02em',
+                            }}>
+                              発注先 {ing.supplier_code}
+                            </span>
+                          )}
+                          {ing.delivery_date && (
+                            <span style={{
+                              color: '#334155', fontSize: '0.88rem', fontWeight: 700,
+                              background: '#f8fafc',
+                              padding: '0.12rem 0.45rem', borderRadius: 4,
+                            }}>
+                              納品 {ing.delivery_date}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
                 </>
               )}
             </div>

@@ -338,7 +338,7 @@ class MenuTableController extends AppController
                 $row = $start;
                 foreach ($meals[$mealType] as $menu) {
                     if ($row >= $start + $count) break;
-                    $setCell($col . $row, $menu['menu_name']);
+                    $setCell($col . $row, $this->wrapMenuNameForChildren((string)$menu['menu_name']));
                     $row++;
                 }
             }
@@ -645,8 +645,8 @@ class MenuTableController extends AppController
         $sheet->getStyle("V{$row}:AA{$row}")->getAlignment()
             ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER)
             ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
-        $sheet->getStyle("V{$row}:AA{$row}")->getFont()->setSize(11);
-        $sheet->getRowDimension($row)->setRowHeight(18);
+        $sheet->getStyle("V{$row}:AA{$row}")->getFont()->setSize(14);
+        $sheet->getRowDimension($row)->setRowHeight(24);
         $row++;
 
         foreach ($suppliers as $sup) {
@@ -696,16 +696,17 @@ class MenuTableController extends AppController
                 $sheet->getCell('AA' . $targetRow)->setValueExplicit($chunk[2] ?? '', $st);
             }
 
-            $sheet->getStyle("V{$row}:AA{$endRow}")->getFont()->setBold(false);
-            $sheet->getStyle("V{$row}:AA{$endRow}")->getFont()->setSize(11);
+            $sheet->getStyle("V{$row}:AA{$endRow}")->getFont()->setBold(true);
+            $sheet->getStyle("V{$row}:AA{$endRow}")->getFont()->setSize(13);
+            $sheet->getStyle("V{$row}:W{$endRow}")->getFont()->setSize(14);
             $sheet->getStyle("V{$row}:AA{$endRow}")->getAlignment()
-                ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_TOP)
+                ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER)
                 ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_LEFT)
                 ->setWrapText(true);
 
             $lineCount = max(count($uniqueOrderDates), 1);
             for ($r = $row; $r <= $endRow; $r++) {
-                $sheet->getRowDimension($r)->setRowHeight(20 * $lineCount);
+                $sheet->getRowDimension($r)->setRowHeight(max(28, 22 * $lineCount));
             }
 
             $fillColor = $this->memoSupplierColor((string)($sup['code'] ?? ''), (string)$sup['name']);
@@ -810,6 +811,8 @@ class MenuTableController extends AppController
     private function fillStaffSection($sheet, array $cg, array $mealRows, array $meals, DateTime $weekStart): void
     {
         [, $menuCol, $ingCol, $qtyCol, $supCol, $delCol] = $cg;
+        $st = \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING;
+
         foreach ([1, 2, 3] as $mealType) {
             if (!isset($mealRows[$mealType]) || !isset($meals[$mealType])) continue;
             $startRow = $mealRows[$mealType]['start'];
@@ -822,29 +825,115 @@ class MenuTableController extends AppController
                 $menuName    = $menu['menu_name'];
                 $ingredients = $menu['ingredients'];
                 if (empty($ingredients)) {
-                    $sheet->getCell($menuCol . $row)->setValueExplicit($menuName, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                    $sheet->getStyle($menuCol . $row)->getFont()->setBold(false);
+                    $this->styleStaffMenuCell($sheet, $menuCol . $row, $menuName);
                     $row++;
                 } else {
                     foreach ($ingredients as $i => $ing) {
                         if ($row >= $endRow) break;
                         if ($i === 0) {
-                            $sheet->getCell($menuCol . $row)->setValueExplicit($menuName, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                            $sheet->getStyle($menuCol . $row)->getFont()->setBold(false);
+                            $this->styleStaffMenuCell($sheet, $menuCol . $row, $menuName);
                         }
-                        $sheet->getCell($ingCol . $row)->setValueExplicit($ing['name'], \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                        $sheet->getCell($qtyCol . $row)->setValueExplicit($this->fmtQty($ing['amount'], $ing['unit']), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                        $sheet->getCell($supCol . $row)->setValueExplicit($ing['supplier_code'], \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                        $sheet->getCell($delCol . $row)->setValueExplicit($ing['delivery_date'], \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                        $sheet->getStyle($ingCol . $row)->getFont()->setBold(false);
-                        $sheet->getStyle($qtyCol . $row)->getFont()->setBold(false);
-                        $sheet->getStyle($supCol . $row)->getFont()->setBold(false);
-                        $sheet->getStyle($delCol . $row)->getFont()->setBold(false);
+
+                        $supplierCode = (string)($ing['supplier_code'] ?? '');
+                        $fillColor = $this->memoSupplierColor($supplierCode, '');
+
+                        $sheet->getCell($ingCol . $row)->setValueExplicit($ing['name'], $st);
+                        $sheet->getCell($qtyCol . $row)->setValueExplicit($this->fmtQty($ing['amount'], $ing['unit']), $st);
+                        $sheet->getCell($supCol . $row)->setValueExplicit($supplierCode, $st);
+                        $sheet->getCell($delCol . $row)->setValueExplicit($ing['delivery_date'], $st);
+
+                        foreach ([$ingCol, $qtyCol, $supCol, $delCol] as $col) {
+                            $style = $sheet->getStyle($col . $row);
+                            $style->getFont()->setBold($col === $supCol || $col === $delCol)->setSize(11);
+                            $style->getAlignment()
+                                ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER)
+                                ->setWrapText($col === $ingCol);
+                        }
+                        $sheet->getStyle($supCol . $row)->getFont()->setSize(12)->setBold(true);
+                        $sheet->getStyle($delCol . $row)->getFont()->setSize(12)->setBold(true);
+
+                        // 色付けは発注先セルのみ
+                        if ($fillColor !== null) {
+                            $sheet->getStyle($supCol . $row)->getFill()
+                                ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+                                ->getStartColor()
+                                ->setARGB($fillColor);
+                        } else {
+                            $sheet->getStyle($supCol . $row)->getFill()
+                                ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_NONE);
+                        }
+
+                        $ingNameLen = mb_strlen((string)$ing['name']);
+                        $rowHeight = $ingNameLen > 12 ? 28 : 22;
+                        $current = $sheet->getRowDimension($row)->getRowHeight();
+                        if ($current < $rowHeight) {
+                            $sheet->getRowDimension($row)->setRowHeight($rowHeight);
+                        }
                         $row++;
                     }
                 }
             }
         }
+    }
+
+    private function styleStaffMenuCell($sheet, string $cell, string $menuName): void
+    {
+        $displayName = $this->wrapMenuNameForDisplay($menuName);
+        $sheet->getCell($cell)->setValueExplicit(
+            $displayName,
+            \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING
+        );
+        $style = $sheet->getStyle($cell);
+        $style->getFont()->setBold(true)->setSize(12);
+        $style->getAlignment()
+            ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER)
+            ->setWrapText(true);
+
+        // 長い献立名は2行分の高さを確保
+        if (preg_match('/^([A-Z]+)(\d+)$/', $cell, $m) && (mb_strlen($menuName) > 8 || str_contains($displayName, "\n"))) {
+            $rowNum = (int)$m[2];
+            $current = $sheet->getRowDimension($rowNum)->getRowHeight();
+            if ($current < 32) {
+                $sheet->getRowDimension($rowNum)->setRowHeight(32);
+            }
+        }
+    }
+
+    /**
+     * 長い献立名を2行表示しやすい位置で改行する
+     */
+    private function wrapMenuNameForDisplay(string $name): string
+    {
+        $name = trim($name);
+        if ($name === '' || mb_strlen($name) <= 8 || str_contains($name, "\n")) {
+            return $name;
+        }
+
+        // 「と」「の」「・」「／」の直後、または中央付近で分割
+        $breakChars = ['と', 'の', '・', '／', '/', '　', ' '];
+        $len = mb_strlen($name);
+        $bestPos = null;
+        $bestScore = PHP_INT_MAX;
+        for ($i = 3; $i < $len - 2; $i++) {
+            $ch = mb_substr($name, $i, 1);
+            if (!in_array($ch, $breakChars, true)) {
+                continue;
+            }
+            $score = abs($i - (int)floor($len / 2));
+            if ($score < $bestScore) {
+                $bestScore = $score;
+                $bestPos = $i + 1;
+            }
+        }
+        if ($bestPos === null) {
+            $bestPos = (int)ceil($len / 2);
+        }
+        return mb_substr($name, 0, $bestPos) . "\n" . mb_substr($name, $bestPos);
+    }
+
+    private function wrapMenuNameForChildren(string $name): string
+    {
+        return $this->wrapMenuNameForDisplay($name);
     }
 
     // ----------------------------------------

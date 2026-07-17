@@ -240,8 +240,8 @@ export default function OrderSheetsPage() {
                         <div style={weekLabelStyle}>今週</div>
                         <div style={{
                           display: 'grid',
-                          gridTemplateColumns: `repeat(${week1Dates.length}, minmax(140px, 1fr))`,
-                          gap: '0.5rem',
+                          gridTemplateColumns: `repeat(${week1Dates.length}, minmax(180px, 1fr))`,
+                          gap: '0.65rem',
                         }}>
                           {week1Dates.map(date => (
                             <DateCard key={date} date={date} ingredients={supplier.days[date] ?? []} isPast={!isFutureOrToday(date)} />
@@ -256,8 +256,8 @@ export default function OrderSheetsPage() {
                         <div style={weekLabelStyle}>翌週</div>
                         <div style={{
                           display: 'grid',
-                          gridTemplateColumns: `repeat(${week2Dates.length}, minmax(140px, 1fr))`,
-                          gap: '0.5rem',
+                          gridTemplateColumns: `repeat(${week2Dates.length}, minmax(180px, 1fr))`,
+                          gap: '0.65rem',
                         }}>
                           {week2Dates.map(date => (
                             <DateCard key={date} date={date} ingredients={supplier.days[date] ?? []} isPast={!isFutureOrToday(date)} />
@@ -306,8 +306,8 @@ export default function OrderSheetsPage() {
                         <div style={weekLabelStyle}>今週</div>
                         <div style={{
                           display: 'grid',
-                          gridTemplateColumns: `repeat(${invWeek1.length}, minmax(140px, 1fr))`,
-                          gap: '0.5rem',
+                          gridTemplateColumns: `repeat(${invWeek1.length}, minmax(180px, 1fr))`,
+                          gap: '0.65rem',
                         }}>
                           {invWeek1.map(date => (
                             <DateCard key={date} date={date} ingredients={inventory.days[date] ?? []} isPast={!isFutureOrToday(date)} accentColor="#d97706" />
@@ -320,8 +320,8 @@ export default function OrderSheetsPage() {
                         <div style={weekLabelStyle}>翌週</div>
                         <div style={{
                           display: 'grid',
-                          gridTemplateColumns: `repeat(${invWeek2.length}, minmax(140px, 1fr))`,
-                          gap: '0.5rem',
+                          gridTemplateColumns: `repeat(${invWeek2.length}, minmax(180px, 1fr))`,
+                          gap: '0.65rem',
                         }}>
                           {invWeek2.map(date => (
                             <DateCard key={date} date={date} ingredients={inventory.days[date] ?? []} isPast={!isFutureOrToday(date)} accentColor="#d97706" />
@@ -356,35 +356,44 @@ function DateCard({
       border: `1px solid ${isPast ? '#f3f4f6' : '#e5e7eb'}`,
       borderRadius: 8, overflow: 'hidden',
       opacity: isPast ? 0.5 : 1,
+      minHeight: 120,
     }}>
       {/* 日付ヘッダー */}
       <div style={{
         background: isPast ? '#f9fafb' : '#f8fafc',
-        padding: '0.35rem 0.6rem',
-        fontSize: '0.82rem', fontWeight: 700,
+        padding: '0.5rem 0.7rem',
+        fontSize: '0.95rem', fontWeight: 800,
         color: isPast ? '#9ca3af' : accentColor,
         borderBottom: `2px solid ${isPast ? '#f3f4f6' : '#e2e8f0'}`,
         display: 'flex', alignItems: 'center', gap: '0.35rem',
       }}>
         {formatDate(date)}
-        {isPast && <span style={{ fontSize: '0.7rem', color: '#d1d5db', fontWeight: 400 }}>（過去）</span>}
+        {isPast && <span style={{ fontSize: '0.78rem', color: '#d1d5db', fontWeight: 400 }}>（過去）</span>}
       </div>
 
       {/* 食材リスト */}
-      <div style={{ padding: '0.4rem 0.6rem' }}>
+      <div style={{ padding: '0.5rem 0.65rem' }}>
         {ingredients.length === 0 ? (
-          <div style={{ fontSize: '0.78rem', color: '#d1d5db', textAlign: 'center', padding: '0.3rem 0' }}>食材なし</div>
+          <div style={{ fontSize: '0.9rem', color: '#d1d5db', textAlign: 'center', padding: '0.4rem 0' }}>食材なし</div>
         ) : (
           ingredients.map((ing, i) => (
             <div key={i} style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-              padding: '0.15rem 0', fontSize: '0.82rem',
-              borderBottom: i < ingredients.length - 1 ? '1px dashed #f1f5f9' : 'none',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+              padding: '0.3rem 0', gap: '0.5rem',
+              borderBottom: i < ingredients.length - 1 ? '1px dashed #e5e7eb' : 'none',
             }}>
-              <span style={{ color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '0.4rem' }}>
+              <span style={{
+                color: '#111827', fontWeight: 600, fontSize: '0.95rem', lineHeight: 1.35,
+                flex: 1, minWidth: 0,
+                display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                overflow: 'hidden', wordBreak: 'break-word',
+              }}>
                 {ing.name}
               </span>
-              <span style={{ color: '#6b7280', whiteSpace: 'nowrap', flexShrink: 0 }}>
+              <span style={{
+                color: accentColor, whiteSpace: 'nowrap', flexShrink: 0,
+                fontWeight: 800, fontSize: '0.95rem',
+              }}>
                 {ing.amount % 1 === 0 ? ing.amount : ing.amount.toFixed(2)}{ing.unit}
               </span>
             </div>

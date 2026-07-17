@@ -741,6 +741,7 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [aiMessage, setAiMessage] = useState<string | null>(null)
+  const [aiCustomNames, setAiCustomNames] = useState<Record<number, Partial<Record<MealType, string[]>>>>({})
 
   // ESCキーで閉じる
   useEffect(() => {
@@ -844,6 +845,7 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
           } else {
             // 外食OFF: 通常の保存フロー
             const newMasterIds = sel[mt] ?? []
+            const newCustomNames = aiCustomNames[block.id]?.[mt] ?? []
             // 選択から外されたメニューを削除（外食メニューも含む）
             for (const existing of existingForMt) {
               if (existing.name.startsWith('外食')) {
@@ -851,7 +853,9 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
                 continue
               }
               const master = masters.find(ma => ma.name === existing.name && (ma.block_id === null || ma.block_id === block.id))
-              if (!master || !newMasterIds.includes(master.id)) {
+              const keptByMaster = master ? newMasterIds.includes(master.id) : false
+              const keptByCustom = newCustomNames.includes(existing.name)
+              if (!keptByMaster && !keptByCustom) {
                 await deleteMenu(existing.id)
               }
             }
@@ -861,6 +865,9 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
               if (master) {
                 await saveMenu({ name: master.name, menu_date: date, meal_type: mt, block_id: block.id })
               }
+            }
+            for (const customName of newCustomNames) {
+              await saveMenu({ name: customName, menu_date: date, meal_type: mt, block_id: block.id })
             }
           }
         }
@@ -878,9 +885,23 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
   const getSelectedNames = (blockId: number, mt: MealType): string[] => {
     const ids = selections[blockId]?.[mt] ?? []
     const blockMasters = mastersForBlock(blockId)
-    return ids
+    const masterNames = ids
       .map(id => blockMasters.find(m => m.id === id)?.name)
       .filter((v): v is string => !!v)
+    const customNames = aiCustomNames[blockId]?.[mt] ?? []
+    return [...masterNames, ...customNames]
+  }
+
+  const removeCustomName = (blockId: number, mt: MealType, name: string) => {
+    setAiCustomNames(prev => ({
+      ...prev,
+      [blockId]: {
+        ...(prev[blockId] ?? {}),
+        [mt]: (prev[blockId]?.[mt] ?? []).filter(n => n !== name),
+      },
+    }))
+    setSaved(false)
+    setError(null)
   }
 
   const mergeAiSuggestion = (blockId: number, suggestions: Record<string, string[]>) => {
@@ -895,6 +916,17 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
           if (m) current.add(m.id)
         }
         next[blockId][mt] = Array.from(current)
+      }
+      return next
+    })
+    setAiCustomNames(prev => {
+      const next = { ...prev, [blockId]: { ...(prev[blockId] ?? {}) } }
+      for (const mt of MEAL_TYPES) {
+        const names = suggestions[String(mt)] ?? []
+        const custom = names.filter(name => !blockMasters.some(m => m.name === name))
+        if (custom.length > 0) {
+          next[blockId][mt] = custom
+        }
       }
       return next
     })
@@ -1048,6 +1080,7 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
                     const selectedMasters = selectedIds
                       .map(id => blockMasters.find(m => m.id === id))
                       .filter((m): m is MenuMaster => m !== undefined)
+                    const customNames = aiCustomNames[block.id]?.[mt] ?? []
                     const availableMasters = blockMasters.filter(m => !selectedIds.includes(m.id))
                     const isRight = idx % 2 === 1
                     const isBottom = idx >= 2
@@ -1059,7 +1092,7 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
                           padding: '0.65rem 0.75rem',
                           borderRight: !isRight ? '1px solid #f1f5f9' : undefined,
                           borderBottom: !isBottom ? '1px solid #f1f5f9' : undefined,
-                          background: isEo ? '#fff7ed' : selectedIds.length > 0 ? c.light : '#fff',
+                          background: isEo ? '#fff7ed' : (selectedIds.length > 0 || customNames.length > 0) ? c.light : '#fff',
                           transition: 'background 0.12s',
                         }}
                       >
@@ -1073,9 +1106,9 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
                           }}>
                             {MEAL_TYPE_LABELS[mt]}
                           </span>
-                          {!isEo && selectedIds.length > 0 && (
+                          {!isEo && (selectedIds.length > 0 || customNames.length > 0) && (
                             <span style={{ fontSize: '0.68rem', color: c.text, fontWeight: 600 }}>
-                              {selectedIds.length}品
+                              {selectedIds.length + customNames.length}品
                             </span>
                           )}
                           {blockCanEdit && (
@@ -1133,7 +1166,7 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
                           /* 外食OFF: 通常のメニュー選択 */
                           <>
                             {/* 選択済みメニューチップ */}
-                            {selectedMasters.length > 0 && (
+                            {(selectedMasters.length > 0 || customNames.length > 0) && (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.18rem', marginBottom: '0.3rem' }}>
                                 {selectedMasters.map(m => (
                                   <div key={m.id} style={{
@@ -1153,6 +1186,33 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
                                       <button
                                         type="button"
                                         onClick={() => removeItem(block.id, mt, m.id)}
+                                        style={{
+                                          background: 'none', border: 'none', cursor: 'pointer',
+                                          color: '#9ca3af', fontSize: '0.72rem', padding: '0 0.1rem',
+                                          lineHeight: 1, flexShrink: 0,
+                                        }}
+                                      >✕</button>
+                                    )}
+                                  </div>
+                                ))}
+                                {customNames.map(name => (
+                                  <div key={`ai-${name}`} style={{
+                                    display: 'flex', alignItems: 'center',
+                                    background: '#ecfdf5', border: '1px solid #6ee7b7',
+                                    borderRadius: 5, padding: '0.18rem 0.25rem 0.18rem 0.4rem',
+                                    gap: '0.2rem',
+                                  }}>
+                                    <span style={{
+                                      flex: 1, color: '#047857', fontWeight: 600,
+                                      fontSize: '0.78rem', minWidth: 0,
+                                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                    }}>
+                                      {name}<span style={{ opacity: 0.7, fontSize: '0.68rem' }}> AI</span>
+                                    </span>
+                                    {blockCanEdit && (
+                                      <button
+                                        type="button"
+                                        onClick={() => removeCustomName(block.id, mt, name)}
                                         style={{
                                           background: 'none', border: 'none', cursor: 'pointer',
                                           color: '#9ca3af', fontSize: '0.72rem', padding: '0 0.1rem',

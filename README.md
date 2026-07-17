@@ -49,9 +49,23 @@ docker compose --env-file .env.instance2 -p meal2 up -d --build
 
 ## AI メニュー提案 API
 
+OpenRouter（既定モデル: `openai/gpt-oss-20b:free`）を使い、献立提案とメニューマスタ下書きを生成します。
+
+`.env` の設定例:
+```env
+AI_PUBLIC_ENABLED=true
+NEXT_PUBLIC_AI_PUBLIC_ENABLED=true
+AI_PROVIDER=openrouter
+OPENROUTER_MODEL=openai/gpt-oss-20b:free
+OPENROUTER_API_KEY=sk-or-...
+```
+
 バックエンド API:
 - `POST /api/ai/menu-suggest`
   - 入力: `date`, `block_id`, `existing_by_meal`
-  - 出力: 食事種別ごとの提案メニュー名（既存 `menu_masters` から選択）
+  - 出力: 食事種別ごとの新規献立名（メニューマスタ未登録でも可）
+- `POST /api/ai/menu-master-draft`
+  - 入力: `name`, `block_id`
+  - 出力: 食材・分量などの下書き
 
 LLM プロバイダは `.env` の `AI_PROVIDER`（`openrouter` / `groq`）で切り替えます。
