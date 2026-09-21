@@ -3,44 +3,19 @@
 import { useState, useEffect, useCallback } from 'react'
 import dynamic from 'next/dynamic'
 import {
-  fetchOrderSheetPreview, fetchOrderSheetPdf, fetchInventoryPreview,
-  type OrderSheetPreviewResponse, type InventoryPreviewResponse,
+  fetchOrderSheetPreview,
+  fetchOrderSheetPdf,
+  fetchInventoryPreview,
+  type OrderSheetPreviewResponse,
+  type InventoryPreviewResponse,
 } from '../_lib/api/client'
+import { getMondayOf, addWeeks, addDays, todayStr, formatShort } from '../_lib/date'
+import WeekBar from '../_components/WeekBar'
 
 const PdfViewerModal = dynamic(() => import('../_components/PdfViewerModal'), { ssr: false })
 
-/** タイムゾーン安全：Date → 'YYYY-MM-DD' */
-function toDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
+type Ingredient = { name: string; amount: number; unit: string }
 
-/** 月曜日の日付文字列を返す（ローカル時刻基準） */
-function getMondayOf(date: Date): string {
-  const dow = date.getDay() === 0 ? 7 : date.getDay()
-  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate() - (dow - 1))
-  return toDateStr(d)
-}
-
-function addWeeks(dateStr: string, weeks: number): string {
-  const [y, m, day] = dateStr.split('-').map(Number)
-  const d = new Date(y, m - 1, day + weeks * 7)
-  return toDateStr(d)
-}
-
-function formatDate(dateStr: string): string {
-  const [y, m, d] = dateStr.split('-').map(Number)
-  const dt = new Date(y, m - 1, d)
-  const dow = ['日', '月', '火', '水', '木', '金', '土'][dt.getDay()]
-  return `${m}/${d}(${dow})`
-}
-
-/** 今日以降かどうか */
-function isFutureOrToday(dateStr: string): boolean {
-  const today = toDateStr(new Date())
-  return dateStr >= today
-}
-
-// PDF モーダルの状態
 interface PdfModal {
   url: string
   supplierName: string
@@ -55,6 +30,9 @@ export default function OrderSheetsPage() {
   const [error, setError] = useState<string | null>(null)
   const [downloading, setDownloading] = useState<number | null>(null)
   const [pdfModal, setPdfModal] = useState<PdfModal | null>(null)
+  const [today, setToday] = useState('')
+
+  useEffect(() => setToday(todayStr()), [])
 
   const loadPreview = useCallback(async (ws: string) => {
     setLoading(true)
@@ -67,7 +45,7 @@ export default function OrderSheetsPage() {
       setPreview(previewRes.data)
       setInventory(invRes.data)
     } catch {
-      setError('集計データの取得に失敗しました')
+      setError('食材の集計を取得できませんでした。通信を確認して、もう一度お試しください。')
       setPreview(null)
       setInventory(null)
     } finally {
@@ -75,9 +53,10 @@ export default function OrderSheetsPage() {
     }
   }, [])
 
-  useEffect(() => { loadPreview(weekStart) }, [weekStart, loadPreview])
+  useEffect(() => {
+    loadPreview(weekStart)
+  }, [weekStart, loadPreview])
 
-  // モーダルを閉じたときに blob URL を解放
   const closePdfModal = () => {
     if (pdfModal) {
       setTimeout(() => URL.revokeObjectURL(pdfModal.url), 1000)
@@ -94,307 +73,234 @@ export default function OrderSheetsPage() {
       const url = URL.createObjectURL(blob)
       setPdfModal({ url, supplierName, fileName: `${supplierName}_${weekStart}週.pdf` })
     } catch {
-      setError(`${supplierName}の発注書PDF生成に失敗しました`)
+      setError(`${supplierName}の発注書を作成できませんでした。もう一度お試しください。`)
     } finally {
       setDownloading(null)
     }
   }
 
   const week2Start = addWeeks(weekStart, 1)
-  const [wey, wem, wed] = week2Start.split('-').map(Number)
-  const weekEndDate = new Date(wey, wem - 1, wed - 1)
-  const weekEndStr = `${weekEndDate.getMonth() + 1}/${weekEndDate.getDate()}`
+  const isFutureOrToday = (dateStr: string) => !!today && dateStr >= today
+
+  // 2週間のどの日に食材があるか（ストリップの注記に使う）
+  const dayCounts: Record<string, number> = {}
+  for (const s of preview?.suppliers ?? []) {
+    for (const [date, ings] of Object.entries(s.days)) {
+      dayCounts[date] = (dayCounts[date] ?? 0) + (ings?.length ?? 0)
+    }
+  }
 
   return (
     <div>
-      {/* PDF モーダル */}
       {pdfModal && (
         <PdfViewerModal
           url={pdfModal.url}
           fileName={pdfModal.fileName}
-          title={`${pdfModal.supplierName} 発注書プレビュー`}
+          title={`${pdfModal.supplierName} 発注書`}
           onClose={closePdfModal}
         />
       )}
 
-      {/* 週選択バー */}
-      <div className="no-print" style={{
-        background: '#fff', borderRadius: 12, padding: '1rem 1.5rem',
-        marginBottom: '1.5rem', boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-        display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap',
-      }}>
-        <button onClick={() => setWeekStart(ws => addWeeks(ws, -1))} style={navBtn}>← 前週</button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <label style={{ fontSize: '0.85rem', color: '#6b7280', fontWeight: 600 }}>週開始（月曜日）</label>
-          <input
-            type="date"
-            value={weekStart}
-            onChange={e => {
-              const [y, m, d] = e.target.value.split('-').map(Number)
-              setWeekStart(getMondayOf(new Date(y, m - 1, d)))
-            }}
-            style={{
-              padding: '0.45rem 0.75rem', fontSize: '0.9rem',
-              border: '2px solid #e5e7eb', borderRadius: 8, outline: 'none', color: '#1a202c',
-            }}
-          />
-        </div>
-        <div style={{ fontWeight: 700, fontSize: '1rem', color: '#1a3a5c' }}>
-          {formatDate(weekStart)} 〜 {weekEndStr}（2週間）
-        </div>
-        <button onClick={() => setWeekStart(ws => addWeeks(ws, 1))} style={navBtn}>翌週 →</button>
-        <button
-          onClick={() => setWeekStart(getMondayOf(new Date()))}
-          style={{ ...navBtn, background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }}
-        >
-          今週
-        </button>
-      </div>
+      <div className="no-print">
+        <WeekBar
+          weekStart={weekStart}
+          weeks={2}
+          onPrev={() => setWeekStart((ws) => addWeeks(ws, -1))}
+          onNext={() => setWeekStart((ws) => addWeeks(ws, 1))}
+          onThisWeek={() => setWeekStart(getMondayOf(new Date()))}
+          busy={loading}
+          dayState={(ds) => (dayCounts[ds] > 0 ? 'saved' : 'none')}
+          dayLabel={(ds) => (dayCounts[ds] > 0 ? `${dayCounts[ds]}品` : '—')}
+        />
 
-      {/* 説明 */}
-      <div className="no-print" style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 8, padding: '0.6rem 1rem', marginBottom: '1rem', fontSize: '0.85rem', color: '#0369a1' }}>
-        📋 献立管理に登録されたメニューと食数から食材を自動集計します。PDFには今日以降の納品日のみ出力されます。
+        <p className="notice">
+          献立に登録されたメニューと食数から食材を集計しています。PDFに載るのは本日以降の納品日だけです。
+        </p>
       </div>
 
       {error && (
-        <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, padding: '0.75rem 1rem', marginBottom: '1rem', color: '#dc2626', fontSize: '0.9rem' }}>
-          ⚠ {error}
-        </div>
+        <p className="notice notice--error" role="alert">
+          {error}
+        </p>
       )}
 
       {loading ? (
-        <div style={{ background: '#fff', borderRadius: 12, padding: '3rem', textAlign: 'center', color: '#9ca3af', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
-          <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>⏳</div>
-          集計中...
-        </div>
-      ) : preview ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          {preview.suppliers.map(supplier => {
+        <p className="empty">集計しています</p>
+      ) : !preview ? null : (
+        <>
+          {preview.suppliers.map((supplier) => {
             const allDates = Object.keys(supplier.days).sort()
             const futureDates = allDates.filter(isFutureOrToday)
-            const week1Dates = allDates.filter(d => d < week2Start)
-            const week2Dates = allDates.filter(d => d >= week2Start)
 
             return (
-              <div key={supplier.supplier_id} className="supplier-card" style={{
-                background: '#fff', borderRadius: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-                border: '1px solid #f1f5f9', overflow: 'hidden',
-              }}>
-                {/* 印刷専用ヘッダー（画面では非表示） */}
-                <div className="print-only" style={{
-                  display: 'none',
-                  padding: '0.4rem 1rem',
-                  fontWeight: 700, fontSize: '0.95rem', color: '#1a3a5c',
-                  borderBottom: '2px solid #1a3a5c',
-                }}>
-                  🏪 {supplier.supplier_name}　{formatDate(weekStart)} 〜 {weekEndStr}
-                </div>
-                {/* ヘッダー */}
-                <div className="no-print" style={{
-                  padding: '0.85rem 1.5rem', borderBottom: '1px solid #f1f5f9',
-                  background: 'linear-gradient(135deg, #1a3a5c, #2563eb)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <span style={{ fontSize: '1.1rem' }}>🏪</span>
-                    <span style={{ fontWeight: 700, fontSize: '1rem', color: '#fff' }}>{supplier.supplier_name}</span>
-                    {futureDates.length > 0 ? (
-                      <span style={{ background: 'rgba(255,255,255,0.2)', color: '#fff', fontSize: '0.75rem', padding: '0.15rem 0.5rem', borderRadius: 4 }}>
-                        今後{futureDates.length}日分
-                      </span>
-                    ) : (
-                      <span style={{ background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.6)', fontSize: '0.75rem', padding: '0.15rem 0.5rem', borderRadius: 4 }}>
-                        この週の注文なし
-                      </span>
-                    )}
+              <section className="sheet supplier-card" key={supplier.supplier_id}>
+                <div className="sheet__head">
+                  <h2>{supplier.supplier_name}</h2>
+                  <span style={{ fontSize: 'var(--fs-sm)', color: 'rgba(242,245,243,0.7)' }}>
+                    {formatShort(weekStart)} 〜 {formatShort(addDays(weekStart, 13))}
+                  </span>
+                  <div className="sheet__meta">
+                    <span>
+                      {futureDates.length > 0
+                        ? `これから納品 ${futureDates.length} 日分`
+                        : 'この期間の納品はありません'}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn no-print"
+                      onClick={() => handleDownload(supplier.supplier_id, supplier.supplier_name)}
+                      disabled={downloading === supplier.supplier_id || futureDates.length === 0}
+                    >
+                      {downloading === supplier.supplier_id ? '作成しています' : '発注書を開く'}
+                    </button>
                   </div>
-                  <button
-                    onClick={() => handleDownload(supplier.supplier_id, supplier.supplier_name)}
-                    disabled={downloading === supplier.supplier_id || futureDates.length === 0}
-                    style={{
-                      padding: '0.45rem 1rem',
-                      background: futureDates.length > 0 ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.05)',
-                      color: futureDates.length > 0 ? '#fff' : 'rgba(255,255,255,0.35)',
-                      border: `1px solid ${futureDates.length > 0 ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)'}`,
-                      borderRadius: 8,
-                      cursor: futureDates.length > 0 ? 'pointer' : 'not-allowed',
-                      fontSize: '0.85rem',
-                      fontWeight: 600,
-                      display: 'flex', alignItems: 'center', gap: '0.4rem',
-                    }}
-                  >
-                    {downloading === supplier.supplier_id ? '⏳ 生成中...' : '📄 プレビュー・PDF'}
-                  </button>
                 </div>
 
-                {/* 日別データ（読み取り専用） */}
                 {allDates.length === 0 ? (
-                  <div style={{ padding: '1.5rem', textAlign: 'center', color: '#9ca3af', fontSize: '0.9rem' }}>
-                    この週は発注データがありません
-                  </div>
+                  <p className="empty">この期間に発注する食材はありません。</p>
                 ) : (
-                  <div style={{ padding: '0.75rem 1rem' }}>
-                    {/* 今週 */}
-                    {week1Dates.length > 0 && (
-                      <div style={{ marginBottom: week2Dates.length > 0 ? '0.75rem' : 0 }}>
-                        <div style={weekLabelStyle}>今週</div>
-                        <div style={{
-                          display: 'grid',
-                          gridTemplateColumns: `repeat(${week1Dates.length}, minmax(180px, 1fr))`,
-                          gap: '0.65rem',
-                        }}>
-                          {week1Dates.map(date => (
-                            <DateCard key={date} date={date} ingredients={supplier.days[date] ?? []} isPast={!isFutureOrToday(date)} />
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* 翌週 */}
-                    {week2Dates.length > 0 && (
-                      <div>
-                        <div style={weekLabelStyle}>翌週</div>
-                        <div style={{
-                          display: 'grid',
-                          gridTemplateColumns: `repeat(${week2Dates.length}, minmax(180px, 1fr))`,
-                          gap: '0.65rem',
-                        }}>
-                          {week2Dates.map(date => (
-                            <DateCard key={date} date={date} ingredients={supplier.days[date] ?? []} isPast={!isFutureOrToday(date)} />
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  <DayColumns
+                    dates={allDates}
+                    week2Start={week2Start}
+                    days={supplier.days}
+                    isFutureOrToday={isFutureOrToday}
+                  />
                 )}
-              </div>
+              </section>
             )
           })}
 
-          {/* 在庫確認リスト（鎌ホ在庫） */}
-          {inventory && (() => {
-            const invDates = Object.keys(inventory.days).sort()
-            const invWeek1 = invDates.filter(d => d < week2Start)
-            const invWeek2 = invDates.filter(d => d >= week2Start)
-            const hasAny = invDates.some(d => (inventory.days[d] ?? []).length > 0)
-            return (
-              <div style={{
-                background: '#fff', borderRadius: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-                border: '1px solid #fef3c7', overflow: 'hidden',
-              }}>
-                {/* ヘッダー */}
-                <div className="no-print" style={{
-                  padding: '0.85rem 1.5rem', borderBottom: '1px solid #fef3c7',
-                  background: 'linear-gradient(135deg, #92400e, #d97706)',
-                  display: 'flex', alignItems: 'center', gap: '0.75rem',
-                }}>
-                  <span style={{ fontSize: '1.1rem' }}>🏠</span>
-                  <span style={{ fontWeight: 700, fontSize: '1rem', color: '#fff' }}>在庫確認リスト（鎌ホ在庫）</span>
-                  <span style={{ background: 'rgba(255,255,255,0.2)', color: '#fff', fontSize: '0.75rem', padding: '0.15rem 0.5rem', borderRadius: 4 }}>
-                    施設内在庫から用意
-                  </span>
-                </div>
-
-                {!hasAny ? (
-                  <div style={{ padding: '1.5rem', textAlign: 'center', color: '#9ca3af', fontSize: '0.9rem' }}>
-                    この週は在庫から用意する食材がありません
+          {inventory &&
+            (() => {
+              const invDates = Object.keys(inventory.days).sort()
+              const hasAny = invDates.some((d) => (inventory.days[d] ?? []).length > 0)
+              return (
+                <section className="sheet supplier-card">
+                  <div className="sheet__head">
+                    <h2>施設の在庫から用意するもの</h2>
+                    <span style={{ fontSize: 'var(--fs-sm)', color: 'rgba(242,245,243,0.7)' }}>
+                      仕入れずに鎌ホ在庫でまかなう食材
+                    </span>
                   </div>
-                ) : (
-                  <div style={{ padding: '0.75rem 1rem' }}>
-                    {invWeek1.length > 0 && (
-                      <div style={{ marginBottom: invWeek2.length > 0 ? '0.75rem' : 0 }}>
-                        <div style={weekLabelStyle}>今週</div>
-                        <div style={{
-                          display: 'grid',
-                          gridTemplateColumns: `repeat(${invWeek1.length}, minmax(180px, 1fr))`,
-                          gap: '0.65rem',
-                        }}>
-                          {invWeek1.map(date => (
-                            <DateCard key={date} date={date} ingredients={inventory.days[date] ?? []} isPast={!isFutureOrToday(date)} accentColor="#d97706" />
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {invWeek2.length > 0 && (
-                      <div>
-                        <div style={weekLabelStyle}>翌週</div>
-                        <div style={{
-                          display: 'grid',
-                          gridTemplateColumns: `repeat(${invWeek2.length}, minmax(180px, 1fr))`,
-                          gap: '0.65rem',
-                        }}>
-                          {invWeek2.map(date => (
-                            <DateCard key={date} date={date} ingredients={inventory.days[date] ?? []} isPast={!isFutureOrToday(date)} accentColor="#d97706" />
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )
-          })()}
-        </div>
-      ) : null}
+                  {!hasAny ? (
+                    <p className="empty">この期間に在庫から用意する食材はありません。</p>
+                  ) : (
+                    <DayColumns
+                      dates={invDates}
+                      week2Start={week2Start}
+                      days={inventory.days}
+                      isFutureOrToday={isFutureOrToday}
+                    />
+                  )}
+                </section>
+              )
+            })()}
+        </>
+      )}
     </div>
   )
 }
 
-// ----------------------------------------
-// 日付カード（読み取り専用）
-// ----------------------------------------
+function DayColumns({
+  dates,
+  week2Start,
+  days,
+  isFutureOrToday,
+}: {
+  dates: string[]
+  week2Start: string
+  days: Record<string, Ingredient[]>
+  isFutureOrToday: (d: string) => boolean
+}) {
+  const groups: { label: string; dates: string[] }[] = [
+    { label: '今週', dates: dates.filter((d) => d < week2Start) },
+    { label: '翌週', dates: dates.filter((d) => d >= week2Start) },
+  ].filter((g) => g.dates.length > 0)
+
+  return (
+    <div className="sheet__body">
+      {groups.map((g) => (
+        <div key={g.label} style={{ marginBottom: '0.8rem' }}>
+          <p
+            style={{
+              margin: '0 0 0.35rem',
+              paddingBottom: '0.15rem',
+              borderBottom: '1px solid var(--rule)',
+              fontSize: 'var(--fs-sm)',
+              fontWeight: 700,
+              color: 'var(--ink-3)',
+            }}
+          >
+            {g.label}
+          </p>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))',
+              gap: '0.5rem',
+            }}
+          >
+            {g.dates.map((date) => (
+              <DateCard
+                key={date}
+                date={date}
+                ingredients={days[date] ?? []}
+                isPast={!isFutureOrToday(date)}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function DateCard({
-  date, ingredients, isPast, accentColor = '#1a3a5c',
+  date,
+  ingredients,
+  isPast,
 }: {
   date: string
-  ingredients: { name: string; amount: number; unit: string }[]
+  ingredients: Ingredient[]
   isPast: boolean
-  accentColor?: string
 }) {
   return (
-    <div className="date-card" style={{
-      border: `1px solid ${isPast ? '#f3f4f6' : '#e5e7eb'}`,
-      borderRadius: 8, overflow: 'hidden',
-      opacity: isPast ? 0.5 : 1,
-      minHeight: 120,
-    }}>
-      {/* 日付ヘッダー */}
-      <div style={{
-        background: isPast ? '#f9fafb' : '#f8fafc',
-        padding: '0.5rem 0.7rem',
-        fontSize: '0.95rem', fontWeight: 800,
-        color: isPast ? '#9ca3af' : accentColor,
-        borderBottom: `2px solid ${isPast ? '#f3f4f6' : '#e2e8f0'}`,
-        display: 'flex', alignItems: 'center', gap: '0.35rem',
-      }}>
-        {formatDate(date)}
-        {isPast && <span style={{ fontSize: '0.78rem', color: '#d1d5db', fontWeight: 400 }}>（過去）</span>}
-      </div>
+    <div
+      className="date-card"
+      style={{
+        border: '1px solid var(--rule)',
+        borderRadius: 'var(--r)',
+        opacity: isPast ? 0.45 : 1,
+      }}
+    >
+      <p
+        style={{
+          margin: 0,
+          padding: '0.3rem 0.55rem',
+          background: 'var(--paper-alt)',
+          borderBottom: '1px solid var(--rule)',
+          fontWeight: 700,
+          fontSize: 'var(--fs-sm)',
+        }}
+      >
+        <span className="num" style={{ textAlign: 'left' }}>
+          {formatShort(date)}
+        </span>
+        {isPast && <span className="muted" style={{ fontWeight: 400 }}> 納品済</span>}
+      </p>
 
-      {/* 食材リスト */}
-      <div style={{ padding: '0.5rem 0.65rem' }}>
+      <div style={{ padding: '0.35rem 0.55rem' }}>
         {ingredients.length === 0 ? (
-          <div style={{ fontSize: '0.9rem', color: '#d1d5db', textAlign: 'center', padding: '0.4rem 0' }}>食材なし</div>
+          <p className="muted" style={{ margin: 0, fontSize: 'var(--fs-sm)' }}>
+            食材なし
+          </p>
         ) : (
           ingredients.map((ing, i) => (
-            <div key={i} style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
-              padding: '0.3rem 0', gap: '0.5rem',
-              borderBottom: i < ingredients.length - 1 ? '1px dashed #e5e7eb' : 'none',
-            }}>
-              <span style={{
-                color: '#111827', fontWeight: 600, fontSize: '0.95rem', lineHeight: 1.35,
-                flex: 1, minWidth: 0,
-                display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
-                overflow: 'hidden', wordBreak: 'break-word',
-              }}>
-                {ing.name}
-              </span>
-              <span style={{
-                color: accentColor, whiteSpace: 'nowrap', flexShrink: 0,
-                fontWeight: 800, fontSize: '0.95rem',
-              }}>
-                {ing.amount % 1 === 0 ? ing.amount : ing.amount.toFixed(2)}{ing.unit}
+            <div key={i} className="ingline" style={{ borderTop: i > 0 ? undefined : 'none' }}>
+              <span className="ingline__name">{ing.name}</span>
+              <span className="ingline__amount num">
+                {ing.amount % 1 === 0 ? ing.amount : ing.amount.toFixed(2)}
+                {ing.unit}
               </span>
             </div>
           ))
@@ -402,29 +308,4 @@ function DateCard({
       </div>
     </div>
   )
-}
-
-// ----------------------------------------
-// スタイル定数
-// ----------------------------------------
-const navBtn: React.CSSProperties = {
-  padding: '0.45rem 1rem',
-  background: '#f3f4f6',
-  color: '#374151',
-  border: '1px solid #e5e7eb',
-  borderRadius: 8,
-  cursor: 'pointer',
-  fontSize: '0.9rem',
-  fontWeight: 600,
-}
-
-const weekLabelStyle: React.CSSProperties = {
-  fontSize: '0.75rem',
-  fontWeight: 700,
-  color: '#9ca3af',
-  textTransform: 'uppercase',
-  letterSpacing: '0.05em',
-  marginBottom: '0.4rem',
-  paddingBottom: '0.2rem',
-  borderBottom: '1px solid #f1f5f9',
 }
