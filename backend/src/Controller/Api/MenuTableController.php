@@ -6,6 +6,7 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 use ZipArchive;
 use DOMDocument;
 use DateTime;
+use Cake\Log\Log;
 
 /**
  * 献立表 API
@@ -528,13 +529,22 @@ class MenuTableController extends AppController
         // weekStart+5 = 土曜日を先頭日とするシート名を検索して使用する
         $satDate   = (clone $weekStart)->modify('+5 days');
         $satLabel  = (int)$satDate->format('n') . '月' . (int)$satDate->format('j') . '日';
-        $sheetIdx  = 0;
+        $sheetIdx  = null;
         for ($i = 0; $i < $spreadsheet->getSheetCount(); $i++) {
             if (strpos($spreadsheet->getSheet($i)->getTitle(), $satLabel) === 0) {
                 $sheetIdx = $i;
                 break;
             }
         }
+
+        if ($sheetIdx === null) {
+            // 該当週のシートが無い場合（テンプレートの収録範囲外）。
+            // 先頭シートを黙って使い回すと、そのシート固有の内容が残る恐れがあるため、
+            // 複製したシートを使う。日付・曜日・献立・メモ欄はこのあとすべて
+            // 要求された週の値で上書きするので、借りるのはレイアウトだけになる。
+            $sheetIdx = $this->cloneStaffTemplateSheet($spreadsheet, $satDate);
+        }
+
         // PDF/印刷時にテンプレート全シートが出ないよう、対象週シートのみ残す
         for ($i = $spreadsheet->getSheetCount() - 1; $i >= 0; $i--) {
             if ($i !== $sheetIdx) {
@@ -649,6 +659,49 @@ class MenuTableController extends AppController
         $this->writeMemoSection($sheet, $weekStart);
 
         return $spreadsheet;
+    }
+
+    /**
+     * テンプレートに該当週のシートが無いときに、レイアウトを複製して1枚作る。
+     *
+     * テンプレートのシート名はテンプレートを作った年の土曜日が基準なので、
+     * 年が変われば基本的に一致しない（＝ほぼ常にこちらを通る）。
+     * 先頭シートをそのまま使い回すと、そのシート固有の記入が残る可能性がある。
+     *
+     * 複製元には、収録されている週のうち最初のものを使う。
+     * どのシートも土曜はじまりで同じ構造なので、レイアウトは共通で問題ない。
+     *
+     * @param DateTime $satDate 対象週の土曜日
+     * @return int 複製したシートのインデックス
+     */
+    private function cloneStaffTemplateSheet(
+        \PhpOffice\PhpSpreadsheet\Spreadsheet $spreadsheet,
+        DateTime $satDate
+    ): int {
+        $source = $spreadsheet->getSheet(0);
+        $clone  = clone $source;
+
+        // シート名は31文字までで、: \\ / ? * [ ] が使えない
+        $title = mb_substr(
+            (int)$satDate->format('n') . '月' . (int)$satDate->format('j') . '日週',
+            0,
+            31
+        );
+        $suffix = 1;
+        $unique = $title;
+        while ($spreadsheet->sheetNameExists($unique)) {
+            $unique = mb_substr($title, 0, 28) . '_' . $suffix;
+            $suffix++;
+        }
+        $clone->setTitle($unique);
+        $spreadsheet->addSheet($clone);
+
+        Log::debug(sprintf(
+            'MenuTable: %s 週に対応するシートが無いためレイアウトを複製しました',
+            $satDate->format('Y-m-d')
+        ));
+
+        return $spreadsheet->getIndex($clone);
     }
 
     private function clearStaffSection($sheet, array $cg, array $mealRows): void
