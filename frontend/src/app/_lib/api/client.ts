@@ -208,6 +208,8 @@ export const suggestMenuByAi = (data: AiMenuSuggestInput) =>
   client.post<AiMenuSuggestResponse>('/ai/menu-suggest', data)
 export const draftMenuMasterByAi = (data: AiMenuMasterDraftInput) =>
   client.post<AiMenuMasterDraftResponse>('/ai/menu-master-draft', data)
+export const bulkDraftMenuMasterByAi = (data: { block_id?: number | null; include_ingredients?: boolean }) =>
+  client.post<AiMenuMasterBulkResponse>('/ai/menu-master-bulk', data)
 
 // --- Kamaho Rooms Sync ---
 export const syncKamahoRooms = () =>
@@ -285,6 +287,7 @@ export interface OrderInput {
 
 export interface MenuInput {
   name: string;
+  dish_category?: string | null;
   menu_date: string;
   meal_type: MealType;
   block_id: number;
@@ -377,6 +380,21 @@ export interface AiMenuMasterDraftResponse {
     memo: string;
     ingredients: MenuIngredientInput[];
   };
+  raw?: string;
+  message?: string;
+}
+
+export interface AiMenuMasterBulkDish {
+  name: string;
+  dish_category: string | null;
+  grams_per_person: number;
+  memo: string;
+  ingredients: MenuIngredientInput[];
+}
+
+export interface AiMenuMasterBulkResponse {
+  ok: boolean;
+  dishes?: AiMenuMasterBulkDish[];
   raw?: string;
   message?: string;
 }

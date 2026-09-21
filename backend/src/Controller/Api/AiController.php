@@ -6,6 +6,9 @@ use DateTime;
 
 class AiController extends AppController
 {
+    /** 直近のAI呼び出し失敗理由（画面にそのまま出す） */
+    private string $lastAiError = '';
+
     private function ensureAiPublicEnabled(): bool
     {
         $enabled = strtolower((string)(getenv('AI_PUBLIC_ENABLED') ?: 'false')) === 'true';
@@ -90,14 +93,14 @@ class AiController extends AppController
             $nameGenerated = $name !== '';
             if ($name === '') {
                 $this->response = $this->response->withStatus(502);
-                $this->set(['ok' => false, 'message' => '料理名のAI生成に失敗しました']);
+                $this->set(['ok' => false, 'message' => '料理名のAI生成に失敗しました。' . $this->lastAiError]);
                 $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
                 return;
             }
         }
 
         $suppliers = $this->Suppliers->find()
-            ->select(['id', 'name', 'code'])
+            ->select(['id', 'name', 'code', 'notes'])
             ->orderBy(['id' => 'ASC'])
             ->toArray();
 
@@ -117,6 +120,159 @@ class AiController extends AppController
             'raw' => $rawText,
         ]);
         $this->viewBuilder()->setOption('serialize', ['ok', 'name', 'name_generated', 'draft', 'raw']);
+    }
+
+    /**
+     * POST /api/ai/menu-master-bulk
+     * body: { block_id?: number|null, include_ingredients?: bool }
+     * include_ingredients=false の場合は料理名・カテゴリのみ生成（カレンダー用軽量モード）
+     */
+    public function menuMasterBulk(): void
+    {
+        if (!$this->ensureAiPublicEnabled()) {
+            return;
+        }
+        $blockId = $this->request->getData('block_id');
+        $blockId = ($blockId !== null && $blockId !== '') ? (int)$blockId : null;
+        $includeIngredients = $this->request->getData('include_ingredients') !== false;
+        $candidates = $this->fetchCandidateMenuNames($blockId);
+
+        if ($includeIngredients) {
+            $suppliers = $this->Suppliers->find()
+                ->select(['id', 'name', 'code', 'notes'])
+                ->orderBy(['id' => 'ASC'])
+                ->toArray();
+            [$dishes, $rawText] = $this->generateMealSetWithOllama($candidates, $suppliers);
+        } else {
+            [$dishes, $rawText] = $this->generateMealSetNamesWithOllama($candidates);
+        }
+
+        if ($dishes === null) {
+            $this->response = $this->response->withStatus(502);
+            $this->set(['ok' => false, 'message' => 'AI一括生成に失敗しました。' . ($this->lastAiError ?: 'しばらくしてから再試行してください。'), 'raw' => $rawText ?: '']);
+            $this->viewBuilder()->setOption('serialize', ['ok', 'message', 'raw']);
+            return;
+        }
+
+        $this->set(['ok' => true, 'dishes' => $dishes, 'raw' => $rawText]);
+        $this->viewBuilder()->setOption('serialize', ['ok', 'dishes', 'raw']);
+    }
+
+    private function generateMealSetNamesWithOllama(array $candidates): array
+    {
+        $prompt = implode("\n", [
+            "保育施設の給食メニューを1食分生成してください。",
+            "【通常】主食・主菜・副菜・汁物 の4品。【丼物】丼物1品＋副菜・汁物（任意）。",
+            "料理名は実在する日本の料理名にしてください。",
+            "参考（重複を避ける）: " . (empty($candidates) ? 'なし' : implode('、', array_slice($candidates, 0, 15))),
+            'JSONのみ。形式: {"dishes":[{"name":"料理名","dish_category":"主食"},...]}',
+            "dish_categoryは 主食/主菜/副菜/汁物/丼物/デザート のいずれか。",
+        ]);
+
+        $res = $this->callOllama($prompt, 60, ['max_tokens' => 400, 'temperature' => 0.7]);
+        if (!$res['ok']) {
+            return [null, ''];
+        }
+
+        $rawText = trim((string)($res['text'] ?? ''));
+        $parsed = json_decode($rawText, true);
+        if (!is_array($parsed)) {
+            $parsed = $this->extractJsonObject($rawText);
+        }
+        if (!is_array($parsed) || empty($parsed['dishes'])) {
+            error_log('generateMealSetNames parse failed: ' . mb_substr($rawText, 0, 240));
+            return [null, $rawText];
+        }
+
+        $dishes = [];
+        foreach ((array)$parsed['dishes'] as $dish) {
+            if (!is_array($dish)) continue;
+            $name = trim((string)($dish['name'] ?? ''));
+            if ($name === '') continue;
+            $category = trim((string)($dish['dish_category'] ?? ''));
+            $dishes[] = [
+                'name' => $name,
+                'dish_category' => $category !== '' ? $category : null,
+                'grams_per_person' => 0,
+                'memo' => '',
+                'ingredients' => [],
+            ];
+        }
+
+        return empty($dishes) ? [null, $rawText] : [$dishes, $rawText];
+    }
+
+    private function generateMealSetWithOllama(array $candidates, array $suppliers): array
+    {
+        $supplierLines = [];
+        foreach ($suppliers as $s) {
+            $line = '・' . (string)$s->name;
+            $notes = trim((string)($s->notes ?? ''));
+            if ($notes !== '') {
+                $line .= '（' . $notes . '）';
+            }
+            $supplierLines[] = $line;
+        }
+        $supplierInfo = empty($supplierLines) ? 'なし' : implode("\n", $supplierLines);
+
+        $prompt = implode("\n", [
+            "保育施設の給食メニューセットを1食分生成してください。",
+            "",
+            "【通常セット】主食・主菜・副菜・汁物 の4品を生成する。",
+            "【丼物セット】丼物1品（主食と主菜を兼ねる）＋ 副菜（任意）＋ 汁物（任意）を生成する。",
+            "",
+            "どちらかを選んで生成してください。全ての料理名は実在する日本の料理名にしてください。",
+            "",
+            "既存メニュー（重複を避けること）:",
+            (empty($candidates) ? 'なし' : implode('、', array_slice($candidates, 0, 20))),
+            "",
+            "仕入先一覧:",
+            $supplierInfo,
+            "",
+            "出力はJSONのみ。形式:",
+            '{"meal_type":"normal","dishes":[{"name":"料理名","dish_category":"主食","grams_per_person":100,"memo":"","ingredients":[{"name":"材料名","amount":50,"unit":"g","supplier_name":"","persons_per_unit":null}]}]}',
+            "dish_categoryは 主食/主菜/副菜/汁物/丼物/デザート から選ぶ。",
+            "supplier_nameは仕入先一覧から品目が一致する場合のみ設定。不明な場合は\"\"。",
+            "ingredientsは各料理3〜5件。unitは g,kg,ml,L,個,枚,本,袋,缶,束,合,大さじ,小さじ,切れ,適量 のいずれか。",
+        ]);
+
+        $res = $this->callOllama($prompt, 150, ['max_tokens' => 3000, 'temperature' => 0.7]);
+        if (!$res['ok']) {
+            return [null, ''];
+        }
+
+        $rawText = trim((string)($res['text'] ?? ''));
+        $parsed = json_decode($rawText, true);
+        if (!is_array($parsed)) {
+            $parsed = $this->extractJsonObject($rawText);
+        }
+        if (!is_array($parsed) || empty($parsed['dishes'])) {
+            error_log('menuMasterBulk parse failed: ' . mb_substr($rawText, 0, 240));
+            return [null, $rawText];
+        }
+
+        $dishes = [];
+        foreach ((array)$parsed['dishes'] as $dish) {
+            if (!is_array($dish)) continue;
+            $dishName = trim((string)($dish['name'] ?? ''));
+            if ($dishName === '') continue;
+
+            $normalized = $this->normalizeMenuMasterDraft($dish, $suppliers);
+            $dishCategory = trim((string)($dish['dish_category'] ?? ''));
+            $dishes[] = [
+                'name' => $dishName,
+                'dish_category' => $dishCategory !== '' ? $dishCategory : null,
+                'grams_per_person' => $normalized['grams_per_person'],
+                'memo' => $normalized['memo'],
+                'ingredients' => $normalized['ingredients'],
+            ];
+        }
+
+        if (empty($dishes)) {
+            return [null, $rawText];
+        }
+
+        return [$dishes, $rawText];
     }
 
     private function fetchCandidateMenuNames(?int $blockId): array
@@ -158,29 +314,35 @@ class AiController extends AppController
             : implode('、', array_slice($candidates, 0, 30));
 
         $prompt = implode("\n", [
-            "あなたは保育施設の献立提案アシスタントです。",
+            "あなたは保育施設の管理栄養士です。",
             "日付: {$date}（{$season}）",
             "食事種別: 1=朝食, 2=昼食, 3=夕食, 4=おやつ",
-            "この日の既存献立（同じ名前は使わないこと）:",
+            "",
+            "【重要】必ず実在する日本の料理名のみを提案してください。架空・造語の料理名は厳禁です。",
+            "保育施設・給食で一般的に提供される実際の料理（例: ご飯、味噌汁、肉じゃが、カレーライス、ほうれん草のおひたし、プリン など）を使ってください。",
+            "",
+            "この日の既存献立（重複不可）:",
             implode("\n", $existingText),
-            "過去の献立例（参考のみ。そのまま選ばず、新しいメニュー名を考えること）:",
+            "",
+            "過去に使われた献立例（参考。ここから選んでも可）:",
             $referenceMenus,
-            "各食事種別に、保育施設向けの新しい献立名を1つずつ考えてください。",
-            "メニューマスタに無い新規の料理名で構いません。",
-            "献立名は日本語で20文字以内、具体的な料理名にしてください。",
+            "",
+            "各食事種別に献立名を1つずつ提案してください。",
+            "・{$season}らしい季節感のある料理を優先する",
+            "・料理名は日本語で20文字以内",
             "出力はJSONのみ。形式:",
-            '{"suggestions":{"1":["..."],"2":["..."],"3":["..."],"4":["..."]}}',
-            "各食事は最大1件。",
+            '{"suggestions":{"1":["朝食の料理名"],"2":["昼食の料理名"],"3":["夕食の料理名"],"4":["おやつの料理名"]}}',
+            "各食事は1件のみ。",
         ]);
 
-        $res = $this->callOllama($prompt, 120, ['num_predict' => 160, 'num_ctx' => 768, 'temperature' => 0.7]);
+        $res = $this->callOllama($prompt, 90, ['max_tokens' => 1000, 'temperature' => 0.7]);
         if (!$res['ok']) {
             $retryPrompt = implode("\n", [
-                "保育施設向けに、朝食・昼食・夕食・おやつの新しい献立名を1件ずつ考えてJSONだけ返してください。",
-                "既存献立: " . (empty($existingNames) ? 'なし' : implode('、', array_slice($existingNames, 0, 12))),
-                '{"suggestions":{"1":["..."],"2":["..."],"3":["..."],"4":["..."]}}',
+                "保育施設向けに、実在する日本料理の名前で朝食・昼食・夕食・おやつを1件ずつJSONだけ返してください。",
+                "架空の料理名は使わないこと。既存献立と重複不可: " . (empty($existingNames) ? 'なし' : implode('、', array_slice($existingNames, 0, 12))),
+                '{"suggestions":{"1":["朝食"],"2":["昼食"],"3":["夕食"],"4":["おやつ"]}}',
             ]);
-            $res = $this->callOllama($retryPrompt, 80, ['num_predict' => 120, 'num_ctx' => 512, 'temperature' => 0.5]);
+            $res = $this->callOllama($retryPrompt, 60, ['max_tokens' => 600, 'temperature' => 0.5]);
         }
         if (!$res['ok']) {
             return [null, ''];
@@ -273,18 +435,33 @@ class AiController extends AppController
 
     private function generateMenuMasterDraftWithOllama(string $name, array $candidates, array $suppliers): array
     {
-        $supplierNames = array_map(fn($s) => (string)$s->name, $suppliers);
+        $supplierLines = [];
+        foreach ($suppliers as $s) {
+            $line = '・' . (string)$s->name;
+            $notes = trim((string)($s->notes ?? ''));
+            if ($notes !== '') {
+                $line .= '（' . $notes . '）';
+            }
+            $supplierLines[] = $line;
+        }
+        $supplierInfo = empty($supplierLines) ? 'なし' : implode("\n", $supplierLines);
+
         $prompt = implode("\n", [
-            "あなたは保育施設向けメニューマスタ作成アシスタントです。",
-            "対象メニュー名: {$name}",
-            "既存メニュー参考: " . (empty($candidates) ? 'なし' : implode('、', array_slice($candidates, 0, 30))),
-            "仕入先候補: " . (empty($supplierNames) ? 'なし' : implode('、', $supplierNames)),
-            "出力はJSONのみ。形式:",
+            "保育施設の献立マスタを作成します。",
+            "料理名: {$name}",
+            "参考メニュー: " . (empty($candidates) ? 'なし' : implode('、', array_slice($candidates, 0, 30))),
+            "",
+            "【仕入先一覧】（括弧内は取扱品目のメモ）:",
+            $supplierInfo,
+            "",
+            "上記の料理に必要な材料と分量（1人あたり）をJSONのみで返してください。",
+            "supplier_nameは仕入先一覧の名前から選択し、材料と仕入先の取扱品目が明らかに一致する場合のみ設定すること。不明・一致しない場合は\"\"（空文字）にすること。",
+            "形式:",
             '{"grams_per_person":0,"memo":"","ingredients":[{"name":"","amount":0,"unit":"g","supplier_name":"","persons_per_unit":null}]}',
-            "ingredientsは3〜6件程度。amountは数値。unitは g,kg,ml,L,個,枚,本,袋,缶,束,合,大さじ,小さじ,切れ,適量 から選ぶ。",
+            "ingredientsは3〜6件。amountは数値。unitは g,kg,ml,L,個,枚,本,袋,缶,束,合,大さじ,小さじ,切れ,適量 のいずれか。",
         ]);
 
-        $res = $this->callOllama($prompt, 150, ['num_predict' => 180, 'num_ctx' => 1024, 'temperature' => 0.3]);
+        $res = $this->callOllama($prompt, 120, ['max_tokens' => 2000, 'temperature' => 0.3]);
         if (!$res['ok']) {
             return [null, ''];
         }
@@ -370,14 +547,16 @@ class AiController extends AppController
     private function generateMenuNameWithOllama(array $candidates): ?string
     {
         $prompt = implode("\n", [
-            "保育施設の献立で使える料理名を1つだけ提案してください。",
-            "出力はJSONのみ。形式:",
-            '{"name":"..."}',
-            "似た料理例:",
+            "保育施設の献立マスタに登録する料理名を1つだけ提案してください。",
+            "【重要】必ず実在する日本の料理名を使用してください。架空・造語の料理名は厳禁です。",
+            "例: ご飯、味噌汁、肉じゃが、カレーライス、ほうれん草のおひたし、プリン、炊き込みご飯、豚汁 など",
+            "既存メニュー例（重複不可）:",
             implode('、', array_slice($candidates, 0, 20)),
+            "出力はJSONのみ。形式:",
+            '{"name":"実在する料理名"}',
         ]);
 
-        $res = $this->callOllama($prompt, 60, ['num_predict' => 32, 'num_ctx' => 384, 'temperature' => 0.4]);
+        $res = $this->callOllama($prompt, 60, ['max_tokens' => 500, 'temperature' => 0.4]);
         if (!$res['ok']) return null;
         $rawText = trim((string)($res['text'] ?? ''));
         $parsed = json_decode($rawText, true);
@@ -399,6 +578,7 @@ class AiController extends AppController
 
     private function callOllama(string $prompt, int $timeoutSec = 90, array $options = []): array
     {
+        $this->lastAiError = '';
         $provider = strtolower((string)(getenv('AI_PROVIDER') ?: 'openrouter'));
         if ($provider === 'openrouter') {
             return $this->callOpenRouter($prompt, $timeoutSec, $options);
@@ -464,28 +644,31 @@ class AiController extends AppController
         }
 
         $baseUrl = rtrim((string)(getenv('OPENROUTER_BASE_URL') ?: 'https://openrouter.ai/api/v1'), '/');
-        $model = (string)(getenv('OPENROUTER_MODEL') ?: 'openai/gpt-oss-20b:free');
+        $model = (string)(getenv('OPENROUTER_MODEL') ?: 'openrouter/free');
         $siteUrl = (string)(getenv('OPENROUTER_SITE_URL') ?: 'http://localhost');
         $appName = (string)(getenv('OPENROUTER_APP_NAME') ?: 'meal-order-system');
         $url = $baseUrl . '/chat/completions';
 
-        // gpt-oss 系は推論トークンを消費するため余裕を持たせる
-        $maxTokens = isset($options['num_predict']) ? max(512, (int)$options['num_predict'] * 4) : 1024;
+        $maxTokens = isset($options['max_tokens']) ? (int)$options['max_tokens'] : 1024;
         $temperature = isset($options['temperature']) ? (float)$options['temperature'] : 0.4;
         $payload = [
             'model' => $model,
             'messages' => [
                 [
                     'role' => 'system',
-                    'content' => 'あなたは保育施設向け献立アシスタントです。指示どおりJSONのみを返してください。新しい献立名を考える場合も、説明文やMarkdownは不要です。',
+                    'content' => 'あなたは保育施設の管理栄養士です。JSONのみを返してください。説明・Markdown・前置き・後置きは一切不要です。提案する料理名は必ず実在する日本の料理名を使用し、架空・造語は絶対に使わないでください。',
                 ],
                 ['role' => 'user', 'content' => $prompt],
             ],
             'temperature' => $temperature,
             'max_tokens' => $maxTokens,
+            // openrouter/free は毎回ランダムな無料モデルにルーティングされる。
+            // JSONモード対応モデルだけに絞らないと、前置き文や```json、思考テキストが混ざって解析に失敗する
+            'response_format' => ['type' => 'json_object'],
+            'provider' => ['require_parameters' => true],
         ];
 
-        for ($attempt = 0; $attempt < 2; $attempt++) {
+        for ($attempt = 0; $attempt < 3; $attempt++) {
             $ch = curl_init($url);
             curl_setopt_array($ch, [
                 CURLOPT_POST => true,
@@ -517,8 +700,18 @@ class AiController extends AppController
 
             $bodySnippet = is_string($body) ? mb_substr($body, 0, 240) : '';
             error_log("OpenRouter call failed: attempt={$attempt} status={$status} errno={$errno} err={$error} body={$bodySnippet}");
-            if ($attempt === 0) {
-                usleep(300000);
+
+            if ($status === 429) {
+                // 無料枠は 50リクエスト/日。1回の生成で最大3回消費するため実質15〜20回で枯れる
+                $this->lastAiError = 'OpenRouterの無料利用枠（50リクエスト/日）を使い切りました。翌日9:00(JST)まで待つか、OpenRouterにクレジットを追加してください。';
+            } elseif ($this->lastAiError === '') {
+                $this->lastAiError = "AIプロバイダから正常な応答が得られませんでした（HTTP {$status}）。";
+            }
+
+            if ($attempt < 2) {
+                // 429 レートリミットは長めに待つ、その他は短め
+                $waitMs = $status === 429 ? 3000 : 500;
+                usleep($waitMs * 1000);
             }
         }
 
@@ -532,7 +725,9 @@ class AiController extends AppController
     {
         $content = $message['content'] ?? '';
         if (is_string($content) && trim($content) !== '') {
-            return trim($content);
+            // <think>...</think> タグ（推論モデルの思考部分）を除去してJSONだけ返す
+            $stripped = preg_replace('/<think>.*?<\/think>/su', '', $content);
+            return trim((string)$stripped);
         }
         if (is_array($content)) {
             $parts = [];
@@ -551,17 +746,12 @@ class AiController extends AppController
             }
             $joined = trim(implode("\n", $parts));
             if ($joined !== '') {
-                return $joined;
+                $stripped = preg_replace('/<think>.*?<\/think>/su', '', $joined);
+                return trim((string)$stripped);
             }
         }
 
-        foreach (['reasoning', 'reasoning_content', 'refusal'] as $key) {
-            $alt = $message[$key] ?? '';
-            if (is_string($alt) && trim($alt) !== '') {
-                return trim($alt);
-            }
-        }
-
+        // reasoning フィールドは思考テキストなので使用しない
         return '';
     }
 
@@ -577,18 +767,22 @@ class AiController extends AppController
         $model = (string)(getenv('GROQ_MODEL') ?: 'llama-3.1-8b-instant');
         $url = $baseUrl . '/chat/completions';
 
-        $maxTokens = isset($options['num_predict']) ? max(64, (int)$options['num_predict']) : 256;
+        $maxTokens = isset($options['max_tokens']) ? (int)$options['max_tokens'] : 512;
         $temperature = isset($options['temperature']) ? (float)$options['temperature'] : 0.4;
         $payload = [
             'model' => $model,
             'messages' => [
+                [
+                    'role' => 'system',
+                    'content' => 'あなたは保育施設の管理栄養士です。指示どおりJSONのみを返してください。提案する料理名は必ず実在する日本の料理名を使用し、架空・造語の料理名は絶対に使わないでください。説明文やMarkdownは不要です。',
+                ],
                 ['role' => 'user', 'content' => $prompt],
             ],
             'temperature' => $temperature,
             'max_tokens' => $maxTokens,
         ];
 
-        for ($attempt = 0; $attempt < 2; $attempt++) {
+        for ($attempt = 0; $attempt < 4; $attempt++) {
             $ch = curl_init($url);
             curl_setopt_array($ch, [
                 CURLOPT_POST => true,
@@ -617,8 +811,10 @@ class AiController extends AppController
 
             $bodySnippet = is_string($body) ? mb_substr($body, 0, 240) : '';
             error_log("Groq call failed: attempt={$attempt} status={$status} errno={$errno} err={$error} body={$bodySnippet}");
-            if ($attempt === 0) {
-                usleep(300000);
+            if ($attempt < 3) {
+                // 429 TPMレートリミットは長めに待つ（トークンバケットの回復を待つ）
+                $waitMs = $status === 429 ? 6000 : 1000;
+                usleep($waitMs * 1000);
             }
         }
 
