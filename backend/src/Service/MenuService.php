@@ -1,16 +1,19 @@
 <?php
 namespace App\Service;
 
+use App\Repository\BirthdayMenuDateRepository;
 use App\Repository\MenuRepository;
 use DateTime;
 
 class MenuService
 {
     private MenuRepository $menuRepository;
+    private BirthdayMenuDateRepository $birthdayMenuDateRepository;
 
     public function __construct()
     {
         $this->menuRepository = new MenuRepository();
+        $this->birthdayMenuDateRepository = new BirthdayMenuDateRepository();
     }
 
     /**
@@ -37,9 +40,7 @@ class MenuService
     }
 
     /**
-     * メニュー登録（date+meal_type+block_id+nameでupsert）
-     * 同じ名前のメニューが既にあればパッチ、なければ新規作成。
-     * これにより同日・同食事種別・同ブロックに複数メニューを登録できる。
+     * メニュー登録（date+meal_typeでupsert）
      */
     public function saveMenu(array $data): array
     {
@@ -51,16 +52,18 @@ class MenuService
         $menuDate = $data['menu_date'] ?? null;
         $mealType = isset($data['meal_type']) ? (int)$data['meal_type'] : null;
         $blockId = isset($data['block_id']) ? (int)$data['block_id'] : null;
-        $name = isset($data['name']) ? trim((string)$data['name']) : '';
+        $dishCategory = isset($data['dish_category']) ? trim((string)$data['dish_category']) : '';
 
         $existing = null;
-        if ($menuDate && $mealType && $blockId && $name !== '') {
-            $existing = $this->menuRepository->findByDateMealTypeBlockAndName(
-                $menuDate,
-                $mealType,
-                $blockId,
-                $name
-            );
+        if ($menuDate && $mealType && $blockId !== null) {
+            // dish_category が指定されていれば新しい複合キーで検索、なければ旧来の検索
+            $existing = $dishCategory !== ''
+                ? $this->menuRepository->findByDateMealTypeCategoryAndBlock(
+                    $menuDate, $mealType, $dishCategory, $blockId
+                )
+                : $this->menuRepository->findByDateMealTypeAndBlock(
+                    $menuDate, $mealType, $blockId
+                );
         }
 
         $menu = $existing
@@ -130,9 +133,15 @@ class MenuService
                 ? $this->menuRepository->findByDateRangeAndBlock($sourceStart->format('Y-m-d'), $sourceEnd->format('Y-m-d'), $blockId)
                 : $this->menuRepository->findByDateRange($sourceStart->format('Y-m-d'), $sourceEnd->format('Y-m-d'));
 
-            // 誕生日メニューフィルタ
+            // 誕生日メニューフィルタ（birthday_menu_dates テーブルを参照）
             if (!$includeBirthdayMenu) {
-                $sourceMenus = array_values(array_filter($sourceMenus, fn($m) => !str_contains((string)$m->name, '誕生日')));
+                $birthdayDates = $this->birthdayMenuDateRepository->findDatesByDateRange(
+                    $sourceStart->format('Y-m-d'),
+                    $sourceEnd->format('Y-m-d'),
+                    $blockId
+                );
+                $birthdayDateSet = array_flip($birthdayDates);
+                $sourceMenus = array_values(array_filter($sourceMenus, fn($m) => !isset($birthdayDateSet[(string)$m->menu_date])));
             }
 
             // overwrite=false の場合: ターゲット期間の既存メニューをセットとして保持
@@ -256,11 +265,22 @@ class MenuService
                 : $this->menuRepository->findByDateRange($sourceStart->format('Y-m-d'), $sourceEnd->format('Y-m-d'));
 
             $offsetDays = (int)$sourceStart->diff($targetStart)->format('%r%a');
+
+            $birthdayDateSet = [];
+            if (!$includeBirthdayMenu) {
+                $birthdayDates = $this->birthdayMenuDateRepository->findDatesByDateRange(
+                    $sourceStart->format('Y-m-d'),
+                    $sourceEnd->format('Y-m-d'),
+                    $blockId
+                );
+                $birthdayDateSet = array_flip($birthdayDates);
+            }
+
             $rows = [];
             $blockIds = [];
 
             foreach ($sourceMenus as $m) {
-                if (!$includeBirthdayMenu && str_contains((string)$m->name, '誕生日')) {
+                if (!$includeBirthdayMenu && isset($birthdayDateSet[(string)$m->menu_date])) {
                     continue;
                 }
 

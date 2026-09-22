@@ -11,6 +11,7 @@ import {
   suggestMenuByAi,
   bulkDraftMenuMasterByAi,
   scheduleMenusRoutine,
+  fetchBirthdayMenuDates,
   MEAL_TYPE_LABELS,
   type MealType,
   type MenuItem,
@@ -65,6 +66,7 @@ export default function MenusPage() {
   const [menus, setMenus] = useState<MenuItem[]>([])
   const [blocks, setBlocks] = useState<Block[]>([])
   const [masters, setMasters] = useState<MenuMaster[]>([])
+  const [birthdayDates, setBirthdayDates] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   const [monthAiRunning, setMonthAiRunning] = useState(false)
   const [notice, setNotice] = useState<{ tone: 'ok' | 'error' | 'plain'; text: string } | null>(null)
@@ -93,9 +95,13 @@ export default function MenusPage() {
   const load = useCallback(async (y: number, m: number): Promise<MenuItem[]> => {
     setLoading(true)
     try {
-      const res = await fetchMenusByMonth(y, m)
-      setMenus(res.data.menus)
-      return res.data.menus
+      const [menusRes, bdRes] = await Promise.all([
+        fetchMenusByMonth(y, m),
+        fetchBirthdayMenuDates(y, m),
+      ])
+      setMenus(menusRes.data.menus)
+      setBirthdayDates(new Set(bdRes.data.birthday_menu_dates.map(b => b.menu_date)))
+      return menusRes.data.menus
     } catch {
       setNotice({ tone: 'error', text: '献立を読み込めませんでした。通信を確認して再読み込みしてください。' })
       return []
@@ -405,6 +411,7 @@ export default function MenusPage() {
                 // 祝日は日曜と同じ扱い（赤）。色だけに頼らず名前も出す
                 const isSun = di === 0 || holiday !== null
                 const isSat = di === 6 && !holiday
+                const isBirthday = day ? birthdayDates.has(dateStr) : false
 
                 if (!day) return <div key={di} className="calendar__cell calendar__cell--empty" />
 
@@ -420,6 +427,11 @@ export default function MenusPage() {
                     <span className="calendar__num num" data-today={isToday || undefined} data-sun={isSun || undefined} data-sat={isSat || undefined}>
                       {day}
                     </span>
+                    {isBirthday && (
+                      <span className="calendar__birthday" title="誕生日メニュー" aria-label="誕生日メニュー">
+                        🎂
+                      </span>
+                    )}
                     {holiday && <span className="calendar__holiday">{holiday}</span>}
                     <span className="calendar__badges">
                       {badges.map((mt) => (
@@ -837,10 +849,10 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
               if (master) {
                 await saveMenu({
                   name: master.name,
-                  dish_category: master.dish_category,
                   menu_date: date,
                   meal_type: mt,
                   block_id: block.id,
+                  dish_category: master.dish_category ?? undefined,
                 })
               }
             }
@@ -881,13 +893,15 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
     setError(null)
   }
 
-  const mergeAiSuggestion = (blockId: number, suggestions: Record<string, string[]>) => {
+  const mergeAiSuggestion = (blockId: number, suggestions: Record<string, Record<string, string>>) => {
     const blockMasters = mastersForBlock(blockId)
     setSelections((prev) => {
       const next = { ...prev, [blockId]: { ...(prev[blockId] ?? {}) } } as Selections
       for (const mt of MEAL_TYPES) {
         const current = new Set<number>(next[blockId]?.[mt] ?? [])
-        for (const name of suggestions[String(mt)] ?? []) {
+        const byCategory = suggestions[String(mt)] ?? {}
+        for (const name of Object.values(byCategory)) {
+          if (!name) continue
           const m = blockMasters.find((mm) => mm.name === name)
           if (m) current.add(m.id)
         }
@@ -898,7 +912,7 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
     setAiCustomNames((prev) => {
       const next = { ...prev, [blockId]: { ...(prev[blockId] ?? {}) } }
       for (const mt of MEAL_TYPES) {
-        const names = suggestions[String(mt)] ?? []
+        const names = Object.values(suggestions[String(mt)] ?? {}).filter(Boolean)
         const custom = names.filter((name) => !blockMasters.some((m) => m.name === name))
         if (custom.length > 0) next[blockId][mt] = custom
       }
