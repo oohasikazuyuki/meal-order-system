@@ -17,3 +17,15 @@ foreach ($migrations->status() as $row) {
 
 $migrations->migrate();
 echo "migrated\n";
+
+// 列を足すマイグレーションのあと、キャッシュ済みのテーブル定義に新しい列が無いままだと
+// API が既存の列だけを返し続ける。値はDBに入っているのに画面に出ない、という
+// 原因の分かりにくい壊れ方をするので、マイグレーションとセットで捨てる。
+$modelCacheDir = __DIR__ . '/tmp/cache/models';
+$cleared = 0;
+foreach (glob($modelCacheDir . '/*') ?: [] as $file) {
+    if (is_file($file) && @unlink($file)) {
+        $cleared++;
+    }
+}
+echo "model cache cleared ({$cleared} files)\n";

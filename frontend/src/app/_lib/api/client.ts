@@ -562,6 +562,8 @@ export interface SaveBlockOrderQuantitiesInput {
 export interface CoopItem {
   id: number
   name: string
+  /** eふれんずの注文コード。未登録なら null */
+  order_code: string | null
   unit: string
   order_type: 'weekly' | 'daily'
   sort_order: number
@@ -585,6 +587,8 @@ export interface SaveCoopOrdersInput {
     item_id: number
     quantity?: number
     notes?: string
+    /** 送ると品目マスタの注文コードを更新する */
+    order_code?: string
     daily?: Record<string, number>
   }>
 }
