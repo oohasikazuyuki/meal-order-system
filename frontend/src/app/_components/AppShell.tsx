@@ -46,6 +46,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [checking, setChecking] = useState(true)
   const [today, setToday] = useState('')
 
+  // 数値欄の上でホイールを回すと値が黙って変わってしまう。
+  // 1日に数十個の食数を打つ画面があるので、気づかないまま誤った数で
+  // 発注されうる。入力中の数値欄にホイールが来たらフォーカスを外す。
+  useEffect(() => {
+    const onWheel = (e: WheelEvent) => {
+      const el = document.activeElement
+      if (el instanceof HTMLInputElement && el.type === 'number' && el === e.target) {
+        el.blur()
+      }
+    }
+    document.addEventListener('wheel', onWheel, { passive: true })
+    return () => document.removeEventListener('wheel', onWheel)
+  }, [])
+
   useEffect(() => {
     setToday(
       new Date().toLocaleDateString('ja-JP', {

@@ -14,6 +14,7 @@ import {
 } from '../_lib/api/client'
 import { getMondayOf, addWeeks, getWeekDates, formatShort, formatLong } from '../_lib/date'
 import WeekBar, { type DayState } from './WeekBar'
+import ConfirmDialog from './ConfirmDialog'
 
 interface MealEdit {
   room1_kamaho_count: number
@@ -40,6 +41,8 @@ export default function DailyOrderForm() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [showPrintMenu, setShowPrintMenu] = useState(false)
   const [downloading, setDownloading] = useState<number | null>(null)
+  // 未保存のまま移動しようとしたときに保留する操作
+  const [pendingNav, setPendingNav] = useState<(() => void) | null>(null)
 
   const weekDates = getWeekDates(weekStart)
 
@@ -199,6 +202,45 @@ export default function DailyOrderForm() {
     }
   }
 
+  // 取得した値と、いま画面に入っている値がずれていれば未保存とみなす。
+  // 週を切り替えると weekEditState を捨てて取り直すので、
+  // 保護しないと打ち込んだ数字が無言で消える。
+  const dirtyDates = weekDates.filter((ds) => {
+    const blocks = weekData[ds]
+    const es = weekEditState[ds]
+    if (!blocks || !es) return false
+    return blocks.some((b) =>
+      b.quantities.some((q) => {
+        const e = es[b.id]?.[q.meal_type]
+        if (!e) return false
+        return (
+          e.room1_kamaho_count !== q.room1_kamaho_count ||
+          e.room2_kamaho_count !== q.room2_kamaho_count ||
+          e.order_quantity !== q.order_quantity ||
+          e.notes !== q.notes
+        )
+      })
+    )
+  })
+  const hasUnsaved = dirtyDates.length > 0
+
+  // タブを閉じる・再読み込みするときはブラウザに確認させる
+  useEffect(() => {
+    if (!hasUnsaved) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [hasUnsaved])
+
+  /** 未保存があれば確認をはさんでから実行する */
+  const guard = (action: () => void) => {
+    if (hasUnsaved) {
+      setPendingNav(() => action)
+      return
+    }
+    action()
+  }
+
   const activeDateStr = weekDates[activeDay]
   const activeBlocks = weekData[activeDateStr] // undefined = まだ取得していない
   const activeEditState = weekEditState[activeDateStr] ?? {}
@@ -211,17 +253,38 @@ export default function DailyOrderForm() {
 
   return (
     <div>
+      {pendingNav && (
+        <ConfirmDialog
+          title="入力した食数がまだ保存されていません"
+          message={`${dirtyDates.map(formatShort).join('、')} に保存していない入力があります。このまま移動すると入力した数字は失われます。`}
+          confirmLabel="保存せずに移動する"
+          cancelLabel="ここに残る"
+          destructive
+          onConfirm={() => {
+            const go = pendingNav
+            setPendingNav(null)
+            go?.()
+          }}
+          onCancel={() => setPendingNav(null)}
+        />
+      )}
+
       <WeekBar
         weekStart={weekStart}
-        onPrev={() => setWeekStart((ws) => addWeeks(ws, -1))}
-        onNext={() => setWeekStart((ws) => addWeeks(ws, 1))}
-        onThisWeek={() => setWeekStart(getMondayOf(new Date()))}
+        onPrev={() => guard(() => setWeekStart((ws) => addWeeks(ws, -1)))}
+        onNext={() => guard(() => setWeekStart((ws) => addWeeks(ws, 1)))}
+        onThisWeek={() => guard(() => setWeekStart(getMondayOf(new Date())))}
         activeIndex={activeDay}
-        onSelectDay={(i) => setActiveDay(i)}
+        onSelectDay={(i) => guard(() => setActiveDay(i))}
         dayState={dayState}
         busy={loading}
         tools={
           <>
+            {hasUnsaved && (
+              <span className="tag tag--warn" role="status">
+                未保存 {dirtyDates.length}日
+              </span>
+            )}
             <button
               type="button"
               className="btn btn--primary"
@@ -295,7 +358,7 @@ export default function DailyOrderForm() {
       </div>
 
       {loading || activeBlocks === undefined ? (
-        <p className="empty">読み込んでいます</p>
+        <EntrySkeleton />
       ) : activeBlocks.length === 0 ? (
         <div className="sheet">
           <div className="empty">
@@ -341,12 +404,63 @@ export default function DailyOrderForm() {
   )
 }
 
+/**
+ * 読み込み中に表の形を先に出す。
+ * 「読み込んでいます」の一行だと、表示された瞬間に高さが変わって
+ * 目線が飛ぶ。同じ骨組みを出しておくと切り替わりが静かになる。
+ */
+function EntrySkeleton() {
+  return (
+    <div className="sheet" aria-busy="true" aria-label="食数を読み込んでいます">
+      <div className="sheet__head">
+        <span className="skeleton" style={{ display: 'block', width: 140, height: '1.1rem' }} />
+      </div>
+      <div className="sheet__body">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div
+            key={i}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '5rem 1fr 6rem 6rem 6rem',
+              gap: '0.6rem',
+              padding: '0.5rem 0',
+              borderTop: i > 0 ? '1px solid var(--rule-soft)' : undefined,
+            }}
+          >
+            {Array.from({ length: 5 }).map((_, j) => (
+              <span key={j} className="skeleton" style={{ height: '1.4rem' }} />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 interface BlockSheetProps {
   block: BlockWithQuantities
   editState: Record<number, MealEdit>
   onRoomCountChange: (mt: MealType, room: 1 | 2, value: string) => void
   onQuantityChange: (mt: MealType, value: string) => void
   onNotesChange: (mt: MealType, value: string) => void
+}
+
+/**
+ * Enter で同じ列の1つ下の入力欄へ移動する。
+ * 食数は列（部屋）ごとに上から順に読み上げながら打つことが多く、
+ * 毎行マウスに持ち替えずに済ませたい。最終行では何もしない。
+ */
+function moveToNextRow(e: React.KeyboardEvent<HTMLInputElement>): void {
+  if (e.key !== 'Enter') return
+  e.preventDefault()
+  const cell = e.currentTarget.closest('td')
+  const row = cell?.closest('tr')
+  if (!cell || !row) return
+  const colIndex = Array.from(row.children).indexOf(cell)
+  const nextRow = row.nextElementSibling
+  const nextInput = nextRow?.children[colIndex]?.querySelector<HTMLInputElement>('input')
+  nextInput?.focus()
+  nextInput?.select()
 }
 
 function BlockSheet({
@@ -432,6 +546,8 @@ function BlockSheet({
                       min={0}
                       value={rooms.r1}
                       onChange={(e) => onRoomCountChange(q.meal_type, 1, e.target.value)}
+                      onKeyDown={moveToNextRow}
+                      onFocus={(e) => e.target.select()}
                       aria-label={`${MEAL_TYPE_LABELS[q.meal_type]} ${block.room1.name}の食数`}
                       style={{ width: 64 }}
                     />
@@ -443,6 +559,8 @@ function BlockSheet({
                       min={0}
                       value={rooms.r2}
                       onChange={(e) => onRoomCountChange(q.meal_type, 2, e.target.value)}
+                      onKeyDown={moveToNextRow}
+                      onFocus={(e) => e.target.select()}
                       aria-label={`${MEAL_TYPE_LABELS[q.meal_type]} ${block.room2.name}の食数`}
                       style={{ width: 64 }}
                     />
@@ -458,6 +576,8 @@ function BlockSheet({
                       min={0}
                       value={es.order_quantity}
                       onChange={(e) => onQuantityChange(q.meal_type, e.target.value)}
+                      onKeyDown={moveToNextRow}
+                      onFocus={(e) => e.target.select()}
                       aria-label={`${MEAL_TYPE_LABELS[q.meal_type]}の発注数`}
                       style={{ width: 76 }}
                     />

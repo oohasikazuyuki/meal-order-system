@@ -1,6 +1,8 @@
 'use client'
 
 import { useState, useEffect, useCallback, Fragment } from 'react'
+import ConfirmDialog from '../_components/ConfirmDialog'
+import { useModal } from '../_lib/useModal'
 import {
   fetchMenuMasters,
   createMenuMaster,
@@ -76,6 +78,7 @@ export default function MenuMasterPage() {
   const [filterCategory, setFilterCategory] = useState<string>('all')
   const [showBulkModal, setShowBulkModal] = useState(false)
   const [openId, setOpenId] = useState<number | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<MenuMaster | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -100,7 +103,7 @@ export default function MenuMasterPage() {
   }, [load])
 
   const handleDelete = async (m: MenuMaster) => {
-    if (!confirm(`「${m.name}」を削除します。よろしいですか？`)) return
+    setDeleteTarget(null)
     const prevMasters = masters
     setMasters((prev) => prev.filter((x) => x.id !== m.id))
     try {
@@ -149,6 +152,17 @@ export default function MenuMasterPage() {
 
   return (
     <div>
+      {deleteTarget && (
+        <ConfirmDialog
+          title="メニューを削除します"
+          message={`「${deleteTarget.name}」と、登録されている材料${(deleteTarget.menu_ingredients ?? []).length}品目を削除します。すでに献立に使われている分はそのまま残ります。`}
+          confirmLabel="削除する"
+          destructive
+          onConfirm={() => handleDelete(deleteTarget)}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+
       {error && (
         <p className="notice notice--error" role="alert">
           {error}
@@ -334,7 +348,7 @@ export default function MenuMasterPage() {
                             <button
                               type="button"
                               className="btn btn--sm btn--danger"
-                              onClick={() => handleDelete(m)}
+                              onClick={() => setDeleteTarget(m)}
                             >
                               削除
                             </button>
@@ -773,6 +787,7 @@ function BulkAiModal({
   const [selected, setSelected] = useState<boolean[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const closeRef = useModal(onClose)
 
   useEffect(() => {
     if (!loading) return
@@ -838,7 +853,13 @@ function BulkAiModal({
       <div className="modal" style={{ maxWidth: 680 }}>
         <div className="modal__head">
           <h2>AIでメニューをまとめて作る</h2>
-          <button type="button" className="btn btn--sm" onClick={onClose} style={{ marginLeft: 'auto' }}>
+          <button
+            type="button"
+            className="btn btn--sm"
+            ref={closeRef}
+            onClick={onClose}
+            style={{ marginLeft: 'auto' }}
+          >
             閉じる
           </button>
         </div>

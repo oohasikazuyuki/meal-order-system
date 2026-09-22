@@ -1,6 +1,7 @@
 'use client'
 
 import { getWeekDates, addDays, parseDateStr, formatShort, DOW_MON_FIRST } from '../_lib/date'
+import { getHoliday } from '../_lib/holiday'
 
 export type DayState = 'saved' | 'partial' | 'none'
 
@@ -78,9 +79,15 @@ export default function WeekBar({
         {dates.map((ds, i) => {
           const d = parseDateStr(ds)
           const state = dayState?.(ds, i) ?? 'none'
+          const holiday = getHoliday(ds)
+          // 祝日は日曜と同じ赤。曜日欄に祝日名を出して、色が見えない人にも伝える
+          const isSun = i % 7 === 6 || holiday !== null
+          const isSat = i % 7 === 5 && !holiday
           const content = (
             <>
-              <span className="weekstrip__dow">{DOW_MON_FIRST[i % 7]}</span>
+              <span className="weekstrip__dow" title={holiday ?? undefined}>
+                {holiday ?? DOW_MON_FIRST[i % 7]}
+              </span>
               <span className="weekstrip__num">
                 {d.getMonth() + 1}/{d.getDate()}
               </span>
@@ -90,8 +97,9 @@ export default function WeekBar({
             </>
           )
           const attrs = {
-            'data-sat': i % 7 === 5 || undefined,
-            'data-sun': i % 7 === 6 || undefined,
+            'data-sat': isSat || undefined,
+            'data-sun': isSun || undefined,
+            'data-holiday': holiday ? true : undefined,
           }
 
           return selectable ? (
