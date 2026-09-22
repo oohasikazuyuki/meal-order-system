@@ -10,9 +10,13 @@ class InputValidationException extends ApplicationException
 {
     private array $errors = [];
 
-    public function __construct(array $errors = [], string $message = 'バリデーションエラー')
+    public function __construct(
+        array $errors = [],
+        string $message = 'バリデーションエラー',
+        string $errorCode = ErrorCode::COMMON_VALIDATION
+    )
     {
-        parent::__construct($message, 400);
+        parent::__construct($message, 400, $errorCode, $errors);
         $this->errors = $errors;
     }
 

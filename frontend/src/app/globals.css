@@ -461,6 +461,14 @@ input[type='number'] {
   border-radius: 2px;
 }
 
+/* 誕生日メニューの日。日付のすぐ右に置いて、献立バッジと混ざらないようにする */
+.calendar__birthday {
+  margin-left: 0.25rem;
+  font-size: 0.85rem;
+  line-height: 1;
+  vertical-align: middle;
+}
+
 .calendar__badges {
   display: flex;
   flex-direction: column;

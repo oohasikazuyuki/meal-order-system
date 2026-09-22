@@ -10,12 +10,13 @@ const ENABLE_CACHE = process.env.NEXT_PUBLIC_ENABLE_API_CACHE === 'true';
 const CACHE_TTL = 5 * 60 * 1000; // 5分
 
 // 簡易キャッシュ（クライアントサイドのみ）
-const getCache = (): Map<string, { data: any; timestamp: number }> | null => {
+const getCache = (): Map<string, { data: unknown; timestamp: number }> | null => {
   if (!ENABLE_CACHE || typeof window === 'undefined') return null;
-  if (!(window as any).__apiCache) {
-    (window as any).__apiCache = new Map();
+  const w = window as Window & { __apiCache?: Map<string, { data: unknown; timestamp: number }> };
+  if (!w.__apiCache) {
+    w.__apiCache = new Map();
   }
-  return (window as any).__apiCache;
+  return w.__apiCache;
 };
 
 // リクエストごとにトークンを付与
@@ -38,6 +39,7 @@ client.interceptors.request.use((config: InternalAxiosRequestConfig) => {
           statusText: 'OK (cached)',
           headers: {},
           config,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } as any);
       }
     } catch (e) {
@@ -211,6 +213,19 @@ export const draftMenuMasterByAi = (data: AiMenuMasterDraftInput) =>
 export const bulkDraftMenuMasterByAi = (data: { block_id?: number | null; include_ingredients?: boolean }) =>
   client.post<AiMenuMasterBulkResponse>('/ai/menu-master-bulk', data)
 
+// --- Birthday Menu Dates ---
+export const fetchBirthdayMenuDates = (year: number, month: number, blockId?: number | null) => {
+  const params = new URLSearchParams({ year: String(year), month: String(month) });
+  if (blockId != null) params.set('block_id', String(blockId));
+  return client.get<{ birthday_menu_dates: BirthdayMenuDate[] }>(`/birthday-menu-dates?${params}`);
+};
+export const createBirthdayMenuDate = (data: BirthdayMenuDateInput) =>
+  withCacheClear(client.post<{ success: boolean; birthday_menu_date: BirthdayMenuDate }>('/birthday-menu-dates', data));
+export const updateBirthdayMenuDate = (id: number, data: BirthdayMenuDateInput) =>
+  withCacheClear(client.put<{ success: boolean; birthday_menu_date: BirthdayMenuDate }>(`/birthday-menu-dates/${id}`, data));
+export const deleteBirthdayMenuDate = (id: number) =>
+  withCacheClear(client.delete(`/birthday-menu-dates/${id}`));
+
 // --- Kamaho Rooms Sync ---
 export const syncKamahoRooms = () =>
   client.post<{ ok: boolean; added: string[]; rooms: Room[]; kamaho_rooms: string[] }>('/rooms/sync-kamaho');
@@ -287,16 +302,17 @@ export interface OrderInput {
 
 export interface MenuInput {
   name: string;
-  dish_category?: string | null;
   menu_date: string;
   meal_type: MealType;
   block_id: number;
   grams_per_person?: number;
+  dish_category?: string | null;
 }
 
 export interface MenuItem {
   id: number;
   name: string;
+  dish_category: string | null;
   menu_date: string;
   meal_type: MealType;
   block_id: number;
@@ -360,7 +376,8 @@ export interface AiMenuSuggestResponse {
   ok: boolean;
   date: string;
   block_id: number | null;
-  suggestions: Record<string, string[]>;
+  /** { meal_type_str: { dish_category: name } } */
+  suggestions: Record<string, Record<string, string>>;
   candidate_count: number;
   raw?: string;
   message?: string;
@@ -645,6 +662,19 @@ export interface MenuTableResponse {
   week_end: string
   /** dayIndex 0=Mon .. 6=Sun (配列で返却) */
   days: MenuTableDay[]
+}
+
+export interface BirthdayMenuDate {
+  id: number;
+  menu_date: string;
+  block_id: number | null;
+  memo: string | null;
+}
+
+export interface BirthdayMenuDateInput {
+  menu_date: string;
+  block_id?: number | null;
+  memo?: string;
 }
 
 export const MEAL_TYPE_LABELS: Record<MealType, string> = {
