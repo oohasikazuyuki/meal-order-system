@@ -89,12 +89,21 @@ describe('auth', () => {
   // ── isLoggedIn ────────────────────────────────────────────────────────────
 
   describe('isLoggedIn', () => {
-    it('トークンがあればtrueを返す', () => {
+    // ログイン判定は localStorage と Cookie の両方を見る。
+    // 画面側は localStorage、ミドルウェアは Cookie を読むため、
+    // 片方だけ残った状態を「ログイン中」と扱うと表示と認可がずれる。
+    it('トークンとCookieが一致すればtrueを返す', () => {
       localStorage.setItem('auth_token', 'sometoken')
+      document.cookie = 'auth_token=sometoken; path=/'
       expect(isLoggedIn()).toBe(true)
     })
 
     it('トークンがなければfalseを返す', () => {
+      expect(isLoggedIn()).toBe(false)
+    })
+
+    it('Cookieだけ消えていればfalseを返す', () => {
+      localStorage.setItem('auth_token', 'sometoken')
       expect(isLoggedIn()).toBe(false)
     })
 
