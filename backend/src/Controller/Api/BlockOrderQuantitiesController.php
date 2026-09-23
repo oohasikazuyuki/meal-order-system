@@ -51,17 +51,8 @@ class BlockOrderQuantitiesController extends AppController
             $service      = $this->buildKamahoServiceFromRequest();
             $kamahoByRoom = $service->getMealCountsByRoomForDate($date);
         } catch (\Throwable $e) {
-            if ($this->hasKamahoCredentialHeaders()) {
-                try {
-                    $kamahoByRoom = (new KamahoApiService())->getMealCountsByRoomForDate($date);
-                } catch (\Throwable) {
-                    // kamaho が取れなくても継続（0扱い）
-                }
-                if (!empty($kamahoByRoom)) {
-                    // フォールバック成功時はこのまま継続
-                }
-            }
-            // kamaho が取れなくても継続（0扱い）
+            // kamaho が取れなくても画面は出す（0扱い）。
+            // ここで止めると、外部システムが落ちているだけで食数入力ができなくなる。
         }
 
         // 3. 保存済みのblock_order_quantities
@@ -213,13 +204,5 @@ class BlockOrderQuantitiesController extends AppController
     {
         $options = $this->kamahoCredentialResolverService->resolveKamahoOptions($this->request);
         return new KamahoApiService($options);
-    }
-
-    private function hasKamahoCredentialHeaders(): bool
-    {
-        if ($this->request->getHeaderLine('X-Kamaho-Login-Account-B64') !== '' && $this->request->getHeaderLine('X-Kamaho-Login-Password-B64') !== '') {
-            return true;
-        }
-        return $this->request->getHeaderLine('X-Kamaho-Login-Account') !== '' && $this->request->getHeaderLine('X-Kamaho-Login-Password') !== '';
     }
 }

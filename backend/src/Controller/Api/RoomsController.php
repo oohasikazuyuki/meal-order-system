@@ -4,6 +4,7 @@ namespace App\Controller\Api;
 use App\Controller\AppController;
 use App\Repository\UserRepository;
 use App\Service\CredentialCryptoService;
+use App\Service\CredentialDecryptionException;
 use App\Service\KamahoApiService;
 use App\Service\KamahoCredentialResolverService;
 use Cake\I18n\FrozenTime;
@@ -75,19 +76,6 @@ class RoomsController extends AppController
         $password = (string)($data['password'] ?? $data['login_password'] ?? $data['c_login_passwd'] ?? '');
 
         if ($account === '' || $password === '') {
-            $accountB64 = $this->request->getHeaderLine('X-Kamaho-Login-Account-B64');
-            $passwordB64 = $this->request->getHeaderLine('X-Kamaho-Login-Password-B64');
-            if ($accountB64 !== '' && $passwordB64 !== '') {
-                $decodedAccount = base64_decode($accountB64, true);
-                $decodedPassword = base64_decode($passwordB64, true);
-                if ($decodedAccount !== false && $decodedPassword !== false) {
-                    $account = trim($decodedAccount);
-                    $password = $decodedPassword;
-                }
-            }
-        }
-
-        if ($account === '' || $password === '') {
             $this->response = $this->response->withStatus(400);
             $this->set(['ok' => false, 'message' => '連携ログインIDと連携パスワードを入力してください']);
             $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
@@ -133,25 +121,22 @@ class RoomsController extends AppController
         if ($user === null) {
             return;
         }
-        $service = $this->buildKamahoServiceFromRequest();
         try {
+            $service   = $this->buildKamahoServiceFromRequest();
             $allCounts = $service->getAllRoomsMealCounts();
+        } catch (CredentialDecryptionException $e) {
+            $this->response = $this->response->withStatus(409);
+            $this->set([
+                'ok' => false,
+                'message' => '保存されている連携情報を読み取れませんでした。連携をやり直してください。',
+            ]);
+            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+            return;
         } catch (\RuntimeException $e) {
-            if ($this->hasKamahoCredentialHeaders()) {
-                try {
-                    $allCounts = (new KamahoApiService())->getAllRoomsMealCounts();
-                } catch (\RuntimeException) {
-                    $this->response = $this->response->withStatus(502);
-                    $this->set(['ok' => false, 'message' => $e->getMessage()]);
-                    $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
-                    return;
-                }
-            } else {
-                $this->response = $this->response->withStatus(502);
-                $this->set(['ok' => false, 'message' => $e->getMessage()]);
-                $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
-                return;
-            }
+            $this->response = $this->response->withStatus(502);
+            $this->set(['ok' => false, 'message' => $e->getMessage()]);
+            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+            return;
         }
 
         $kamahoNames = array_keys($allCounts);
@@ -178,13 +163,5 @@ class RoomsController extends AppController
     {
         $options = $this->kamahoCredentialResolverService->resolveKamahoOptions($this->request);
         return new KamahoApiService($options);
-    }
-
-    private function hasKamahoCredentialHeaders(): bool
-    {
-        if ($this->request->getHeaderLine('X-Kamaho-Login-Account-B64') !== '' && $this->request->getHeaderLine('X-Kamaho-Login-Password-B64') !== '') {
-            return true;
-        }
-        return $this->request->getHeaderLine('X-Kamaho-Login-Account') !== '' && $this->request->getHeaderLine('X-Kamaho-Login-Password') !== '';
     }
 }

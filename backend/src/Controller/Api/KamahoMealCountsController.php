@@ -3,6 +3,7 @@ namespace App\Controller\Api;
 
 use App\Controller\AppController;
 use App\Service\KamahoApiService;
+use App\Service\CredentialDecryptionException;
 use App\Service\KamahoCredentialResolverService;
 
 /**
@@ -40,15 +41,8 @@ class KamahoMealCountsController extends AppController
         }
 
         try {
-            $service = $this->buildKamahoServiceFromRequest();
-            try {
-                $counts  = $service->getMealCountsByDate($date);
-            } catch (\RuntimeException $e) {
-                if (!$this->hasKamahoCredentialHeaders()) {
-                    throw $e;
-                }
-                $counts = (new KamahoApiService())->getMealCountsByDate($date);
-            }
+            $options = $this->kamahoCredentialResolverService->resolveKamahoOptions($this->request);
+            $counts  = (new KamahoApiService($options))->getMealCountsByDate($date);
 
             $this->set([
                 'ok'     => true,
@@ -57,6 +51,13 @@ class KamahoMealCountsController extends AppController
                 'counts' => $counts,
             ]);
             $this->viewBuilder()->setOption('serialize', ['ok', 'date', 'user', 'counts']);
+        } catch (CredentialDecryptionException $e) {
+            $this->response = $this->response->withStatus(409);
+            $this->set([
+                'ok' => false,
+                'message' => '保存されている連携情報を読み取れませんでした。連携をやり直してください。',
+            ]);
+            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
         } catch (\Throwable $e) {
             $this->response = $this->response->withStatus(502);
             $this->set([
@@ -65,19 +66,5 @@ class KamahoMealCountsController extends AppController
             ]);
             $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
         }
-    }
-
-    private function buildKamahoServiceFromRequest(): KamahoApiService
-    {
-        $options = $this->kamahoCredentialResolverService->resolveKamahoOptions($this->request);
-        return new KamahoApiService($options);
-    }
-
-    private function hasKamahoCredentialHeaders(): bool
-    {
-        if ($this->request->getHeaderLine('X-Kamaho-Login-Account-B64') !== '' && $this->request->getHeaderLine('X-Kamaho-Login-Password-B64') !== '') {
-            return true;
-        }
-        return $this->request->getHeaderLine('X-Kamaho-Login-Account') !== '' && $this->request->getHeaderLine('X-Kamaho-Login-Password') !== '';
     }
 }
