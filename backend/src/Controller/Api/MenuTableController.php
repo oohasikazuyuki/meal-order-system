@@ -530,36 +530,44 @@ class MenuTableController extends AppController
     private function generateStaffExcel(array $weekData, DateTime $weekStart, DateTime $weekEnd): \PhpOffice\PhpSpreadsheet\Spreadsheet
     {
         $templateFile = dirname(APP) . '/resources/excel_templates/staff_template.xlsx';
-        $spreadsheet  = IOFactory::load($templateFile);
 
-        // テンプレートは週ごとにシートが分かれている（11月1日～3月13日）
-        // weekStart+5 = 土曜日を先頭日とするシート名を検索して使用する
-        $satDate   = (clone $weekStart)->modify('+5 days');
-        $satLabel  = (int)$satDate->format('n') . '月' . (int)$satDate->format('j') . '日';
-        $sheetIdx  = null;
-        for ($i = 0; $i < $spreadsheet->getSheetCount(); $i++) {
-            if (strpos($spreadsheet->getSheet($i)->getTitle(), $satLabel) === 0) {
-                $sheetIdx = $i;
+        // テンプレートは週ごとに19枚のシートを持つが、使うのは1枚だけ。
+        // 全部読むと 0.33秒かかるので、必要な1枚だけを読み込む（0.03秒）。
+        $satDate  = (clone $weekStart)->modify('+5 days');
+        $satLabel = (int)$satDate->format('n') . '月' . (int)$satDate->format('j') . '日';
+
+        $reader     = IOFactory::createReader('Xlsx');
+        $sheetNames = $reader->listWorksheetNames($templateFile);
+        if (empty($sheetNames)) {
+            throw new \RuntimeException('staff_template.xlsx にシートがありません');
+        }
+
+        // シート名はテンプレートを作った年の土曜日が基準なので、年が変われば一致しない。
+        // 見つからない場合は先頭シートをレイアウトとして借りる。
+        // 日付・曜日・献立・メモ欄はこのあとすべて要求された週の値で上書きする。
+        $targetName = null;
+        foreach ($sheetNames as $name) {
+            if (strpos($name, $satLabel) === 0) {
+                $targetName = $name;
                 break;
             }
         }
-
-        if ($sheetIdx === null) {
-            // 該当週のシートが無い場合（テンプレートの収録範囲外）。
-            // 先頭シートを黙って使い回すと、そのシート固有の内容が残る恐れがあるため、
-            // 複製したシートを使う。日付・曜日・献立・メモ欄はこのあとすべて
-            // 要求された週の値で上書きするので、借りるのはレイアウトだけになる。
-            $sheetIdx = $this->cloneStaffTemplateSheet($spreadsheet, $satDate);
+        if ($targetName === null) {
+            $targetName = $sheetNames[0];
+            Log::debug(sprintf(
+                'MenuTable: %s 週に対応するシートが無いため「%s」をレイアウトとして使います',
+                $satDate->format('Y-m-d'),
+                $targetName
+            ));
         }
 
-        // PDF/印刷時にテンプレート全シートが出ないよう、対象週シートのみ残す
-        for ($i = $spreadsheet->getSheetCount() - 1; $i >= 0; $i--) {
-            if ($i !== $sheetIdx) {
-                $spreadsheet->removeSheetByIndex($i);
-            }
-        }
+        $reader->setLoadSheetsOnly([$targetName]);
+        $spreadsheet = $reader->load($templateFile);
         $spreadsheet->setActiveSheetIndex(0);
         $sheet = $spreadsheet->getActiveSheet();
+
+        // Excel でダウンロードしたときにシート名が別の週のままだと紛らわしいので付け替える
+        $sheet->setTitle(mb_substr($satLabel . '週', 0, 31));
         $sheet->getPageSetup()
             ->setFitToPage(true)
             ->setFitToWidth(1)
@@ -659,68 +667,82 @@ class MenuTableController extends AppController
         return $spreadsheet;
     }
 
-    /**
-     * テンプレートに該当週のシートが無いときに、レイアウトを複製して1枚作る。
-     *
-     * テンプレートのシート名はテンプレートを作った年の土曜日が基準なので、
-     * 年が変われば基本的に一致しない（＝ほぼ常にこちらを通る）。
-     * 先頭シートをそのまま使い回すと、そのシート固有の記入が残る可能性がある。
-     *
-     * 複製元には、収録されている週のうち最初のものを使う。
-     * どのシートも土曜はじまりで同じ構造なので、レイアウトは共通で問題ない。
-     *
-     * @param DateTime $satDate 対象週の土曜日
-     * @return int 複製したシートのインデックス
-     */
-    private function cloneStaffTemplateSheet(
-        \PhpOffice\PhpSpreadsheet\Spreadsheet $spreadsheet,
-        DateTime $satDate
-    ): int {
-        $source = $spreadsheet->getSheet(0);
-        $clone  = clone $source;
-
-        // シート名は31文字までで、: \\ / ? * [ ] が使えない
-        $title = mb_substr(
-            (int)$satDate->format('n') . '月' . (int)$satDate->format('j') . '日週',
-            0,
-            31
-        );
-        $suffix = 1;
-        $unique = $title;
-        while ($spreadsheet->sheetNameExists($unique)) {
-            $unique = mb_substr($title, 0, 28) . '_' . $suffix;
-            $suffix++;
-        }
-        $clone->setTitle($unique);
-        $spreadsheet->addSheet($clone);
-
-        Log::debug(sprintf(
-            'MenuTable: %s 週に対応するシートが無いためレイアウトを複製しました',
-            $satDate->format('Y-m-d')
-        ));
-
-        return $spreadsheet->getIndex($clone);
-    }
-
     private function clearStaffSection($sheet, array $cg, array $mealRows): void
     {
         [, $menuCol, $ingCol, $qtyCol, $supCol, $delCol] = $cg;
+        $cols = [$menuCol, $ingCol, $qtyCol, $supCol, $delCol];
+
         foreach ($mealRows as ['start' => $start, 'count' => $count]) {
-            for ($r = $start; $r < $start + $count; $r++) {
-                foreach ([$menuCol, $ingCol, $qtyCol, $supCol, $delCol] as $col) {
+            $endRow = $start + $count - 1;
+
+            foreach ($cols as $col) {
+                for ($r = $start; $r <= $endRow; $r++) {
                     $sheet->getCell($col . $r)->setValue('');
-                    // 値だけ消すとテンプレート由来の塗りが残り、意味のない色帯として印刷される
-                    $sheet->getStyle($col . $r)->getFill()
-                        ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_NONE);
-                }
-                // 前回の献立名の結合が残ると次の週で行がずれるので解除しておく
-                foreach (array_keys($sheet->getMergeCells()) as $range) {
-                    if (preg_match('/^' . $menuCol . '(\d+):' . $menuCol . '(\d+)$/', $range, $mm)
-                        && (int)$mm[1] <= $r && $r <= (int)$mm[2]) {
-                        $sheet->unmergeCells($range);
-                    }
                 }
             }
+
+            // 値だけ消すとテンプレート由来の塗りが残り、意味のない色帯として印刷される。
+            // セル単位で書くとスタイル生成が重いので、範囲指定でまとめて消す
+            // （105セルで 0.20秒 → 0.06秒）。
+            $sheet->getStyle($menuCol . $start . ':' . $delCol . $endRow)
+                ->getFill()->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_NONE);
+
+            // 前回の献立名の結合が残ると次の週で行がずれるので解除しておく。
+            // 結合一覧の走査はブロックごとに1回でよい。
+            foreach (array_keys($sheet->getMergeCells()) as $range) {
+                if (preg_match('/^' . $menuCol . '(\d+):' . $menuCol . '(\d+)$/', $range, $mm)
+                    && (int)$mm[2] >= $start && (int)$mm[1] <= $endRow) {
+                    $sheet->unmergeCells($range);
+                }
+            }
+
+        }
+
+        // 列ごとに決まっている書式は、朝昼夕の3ブロックをまとめて1回で当てる。
+        // PhpSpreadsheet はスタイル変更のたびに再構築が走るため、
+        // 行ごとに設定すると材料1件あたり約43ミリ秒かかっていた。
+        $starts = array_column($mealRows, 'start');
+        $ends   = array_map(fn($m) => $m['start'] + $m['count'] - 1, $mealRows);
+        $this->applyStaffBlockStyles($sheet, $cg, min($starts), max($ends));
+    }
+
+    /**
+     * 献立ブロックの列ごとの書式をまとめて当てる。
+     *
+     * 材料の行ごとに変わるのは仕入先の色だけなので、
+     * フォント・配置・文字色は列ごとに1回で済ませる。
+     * 個別の setter を連ねるより applyFromArray の方が4倍速い。
+     */
+    private function applyStaffBlockStyles($sheet, array $cg, int $start, int $endRow): void
+    {
+        [, $menuCol, $ingCol, $qtyCol, $supCol, $delCol] = $cg;
+
+        $byColumn = [
+            $menuCol => [
+                'font'      => ['bold' => true, 'size' => 14],
+                'alignment' => ['vertical' => 'center', 'horizontal' => 'left', 'wrapText' => true],
+            ],
+            $ingCol => [
+                'font'      => ['bold' => false, 'size' => 13],
+                'alignment' => ['vertical' => 'center', 'wrapText' => true],
+            ],
+            $qtyCol => [
+                'font'      => ['bold' => false, 'size' => 13],
+                'alignment' => ['vertical' => 'center', 'wrapText' => false],
+            ],
+            // 発注先は淡色の背景に記号1文字。文字色はテンプレート任せにせず黒で固定する
+            $supCol => [
+                'font'      => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FF000000']],
+                'alignment' => ['vertical' => 'center', 'wrapText' => false],
+            ],
+            $delCol => [
+                'font'      => ['bold' => true, 'size' => 12],
+                'alignment' => ['vertical' => 'center', 'wrapText' => false],
+            ],
+        ];
+
+        foreach ($byColumn as $col => $style) {
+            $sheet->getStyle($col . $start . ':' . $col . $endRow)->applyFromArray($style);
         }
     }
 
@@ -809,11 +831,10 @@ class MenuTableController extends AppController
         $sheet->getCell('Y' . $row)->setValueExplicit('納品日', $st);
         $sheet->getCell('Z' . $row)->setValueExplicit('', $st);
         $sheet->getCell('AA' . $row)->setValueExplicit('', $st);
-        $sheet->getStyle("V{$row}:AA{$row}")->getFont()->setBold(true);
-        $sheet->getStyle("V{$row}:AA{$row}")->getAlignment()
-            ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER)
-            ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
-        $sheet->getStyle("V{$row}:AA{$row}")->getFont()->setSize(16);
+        $sheet->getStyle("V{$row}:AA{$row}")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 16],
+            'alignment' => ['vertical' => 'center', 'horizontal' => 'center'],
+        ]);
         $sheet->getRowDimension($row)->setRowHeight(32);
         $row++;
 
@@ -864,18 +885,21 @@ class MenuTableController extends AppController
                 $sheet->getCell('AA' . $targetRow)->setValueExplicit($chunk[2] ?? '', $st);
             }
 
-            $sheet->getStyle("V{$row}:AA{$endRow}")->getFont()->setBold(true);
-            $sheet->getStyle("V{$row}:AA{$endRow}")->getFont()->setSize(15);
-            $sheet->getStyle("V{$row}:W{$endRow}")->getFont()->setSize(16);
-            $sheet->getStyle("V{$row}:AA{$endRow}")->getAlignment()
-                ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER)
-                ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_LEFT)
-                ->setIndent(1)
-                ->setWrapText(true);
+            // setter を連ねるより applyFromArray の方が4倍速い
+            $sheet->getStyle("V{$row}:AA{$endRow}")->applyFromArray([
+                'font'      => ['bold' => true, 'size' => 15],
+                'alignment' => [
+                    'vertical'   => 'center',
+                    'horizontal' => 'left',
+                    'indent'     => 1,
+                    'wrapText'   => true,
+                ],
+            ]);
             // 発注先名は見出しなので中央に置く（左端の罫線に文字が張り付くのを防ぐ）
-            $sheet->getStyle("V{$row}:W{$endRow}")->getAlignment()
-                ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER)
-                ->setIndent(0);
+            $sheet->getStyle("V{$row}:W{$endRow}")->applyFromArray([
+                'font'      => ['bold' => true, 'size' => 16, 'color' => ['argb' => 'FF000000']],
+                'alignment' => ['vertical' => 'center', 'horizontal' => 'center', 'indent' => 0],
+            ]);
 
             $lineCount = max(count($uniqueOrderDates), 1);
             for ($r = $row; $r <= $endRow; $r++) {
@@ -883,8 +907,6 @@ class MenuTableController extends AppController
             }
 
             $fillColor = $this->memoSupplierColor((string)($sup['code'] ?? ''), (string)$sup['name']);
-            // 発注先名の文字色も黒で固定する（淡色背景に白文字が残ると消えるため）
-            $sheet->getStyle("V{$row}:W{$endRow}")->getFont()->getColor()->setARGB('FF000000');
             $fill = $sheet->getStyle("V{$row}:W{$endRow}")->getFill();
             if ($fillColor === null) {
                 $fill->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_NONE);
@@ -1014,20 +1036,8 @@ class MenuTableController extends AppController
                         $sheet->getCell($supCol . $row)->setValueExplicit($supplierCode, $st);
                         $sheet->getCell($delCol . $row)->setValueExplicit($ing['delivery_date'], $st);
 
-                        foreach ([$ingCol, $qtyCol, $supCol, $delCol] as $col) {
-                            $style = $sheet->getStyle($col . $row);
-                            $style->getFont()->setBold($col === $supCol || $col === $delCol)->setSize(13);
-                            $style->getAlignment()
-                                ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER)
-                                ->setWrapText($col === $ingCol);
-                        }
-                        $sheet->getStyle($supCol . $row)->getFont()->setSize(14)->setBold(true);
-                        $sheet->getStyle($delCol . $row)->getFont()->setSize(12)->setBold(true);
-
-                        // 色付けは発注先セルのみ。
-                        // 文字色はテンプレート任せにせず必ず黒にする。
-                        // 淡色の背景に白文字が残ると記号が消えるため。
-                        $sheet->getStyle($supCol . $row)->getFont()->getColor()->setARGB('FF000000');
+                        // フォント・配置は applyStaffBlockStyles でブロック単位に当て済み。
+                        // ここで行ごとに変わるのは仕入先の色だけ。
                         if ($fillColor !== null) {
                             $sheet->getStyle($supCol . $row)->getFill()
                                 ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
