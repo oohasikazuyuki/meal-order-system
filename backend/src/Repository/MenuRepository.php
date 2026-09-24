@@ -61,14 +61,18 @@ class MenuRepository
             ->first();
     }
 
-    public function findByDateMealTypeBlockAndName(string $menuDate, int $mealType, int $blockId, string $name)
+    /**
+     * dish_category も含めた upsert 用検索。
+     * 新ユニーク制約 (menu_date, meal_type, block_id, dish_category) に対応。
+     */
+    public function findByDateMealTypeCategoryAndBlock(string $menuDate, int $mealType, string $dishCategory, int $blockId)
     {
         return $this->Menus->find()
             ->where([
-                'menu_date' => $menuDate,
-                'meal_type' => $mealType,
-                'block_id' => $blockId,
-                'name' => $name,
+                'menu_date'     => $menuDate,
+                'meal_type'     => $mealType,
+                'dish_category' => $dishCategory,
+                'block_id'      => $blockId,
             ])
             ->first();
     }

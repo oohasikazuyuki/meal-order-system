@@ -29,7 +29,8 @@ function LoginForm() {
       const res = await login(loginId, password)
       if (res.data.ok) {
         saveAuth(res.data.token, res.data.user)
-        router.push(searchParams.get('redirect') || '/')
+        const redirect = searchParams?.get('redirect') || '/'
+        router.push(redirect)
       }
     } catch {
       setError('ログインIDかパスワードが違います。入力し直してください。')
