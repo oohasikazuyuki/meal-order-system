@@ -4,12 +4,15 @@ import { useState, useEffect, useCallback } from 'react'
 import { fetchCoopOrders, saveCoopOrders, type CoopOrdersResponse } from '../_lib/api/client'
 import { getMondayOf, addWeeks, getWeekDates, parseDateStr, DOW_MON_FIRST } from '../_lib/date'
 import WeekBar from '../_components/WeekBar'
+import CoopOrderListModal from './CoopOrderListModal'
+import { buildOrderLines } from '../_lib/coopOrderList'
 
 type EditState = Record<
   number,
   {
     quantity: number
     notes: string
+    orderCode: string
     daily: Record<string, number>
   }
 >
@@ -22,6 +25,9 @@ export default function CoopOrderPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+  // 発注に出す品目。既定は全部入り。除きたいものだけ外す運用を想定している
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [listOpen, setListOpen] = useState(false)
 
   const load = useCallback(async (ws: string) => {
     setLoading(true)
@@ -35,10 +41,12 @@ export default function CoopOrderPage() {
         init[item.id] = {
           quantity: item.quantity ?? 0,
           notes: item.notes ?? '',
+          orderCode: item.order_code ?? '',
           daily: { ...(item.daily ?? {}) },
         }
       }
       setEditState(init)
+      setSelected(new Set(res.data.items.map((i) => i.id)))
     } catch {
       setError('生協発注の内容を読み込めませんでした。通信を確認して、もう一度お試しください。')
     } finally {
@@ -58,10 +66,16 @@ export default function CoopOrderPage() {
     try {
       const items = data.items.map((item) => {
         const es = editState[item.id]
+        const orderCode = es?.orderCode ?? ''
         if (item.order_type === 'daily') {
-          return { item_id: item.id, daily: es?.daily ?? {} }
+          return { item_id: item.id, order_code: orderCode, daily: es?.daily ?? {} }
         }
-        return { item_id: item.id, quantity: es?.quantity ?? 0, notes: es?.notes ?? '' }
+        return {
+          item_id: item.id,
+          order_code: orderCode,
+          quantity: es?.quantity ?? 0,
+          notes: es?.notes ?? '',
+        }
       })
       await saveCoopOrders({ week_start: weekStart, items })
       setSuccessMsg('この週の生協発注を保存しました')
@@ -84,6 +98,19 @@ export default function CoopOrderPage() {
     setEditState((prev) => ({ ...prev, [itemId]: { ...prev[itemId], notes } }))
   }
 
+  const updateOrderCode = (itemId: number, orderCode: string) => {
+    setEditState((prev) => ({ ...prev, [itemId]: { ...prev[itemId], orderCode } }))
+  }
+
+  const toggleSelected = (itemId: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(itemId)) next.delete(itemId)
+      else next.add(itemId)
+      return next
+    })
+  }
+
   const updateDaily = (itemId: number, date: string, qty: number) => {
     setEditState((prev) => ({
       ...prev,
@@ -96,6 +123,14 @@ export default function CoopOrderPage() {
 
   const weekDates = getWeekDates(weekStart)
 
+  // 注文コードは品目マスタ側の値だが、この画面で直せるようにしている。
+  // リストを組むときは入力中の値を優先する（保存前でも中身を確認できるように）
+  const itemsWithEditedCode = (data?.items ?? []).map((item) => ({
+    ...item,
+    order_code: (editState[item.id]?.orderCode ?? item.order_code ?? '') || null,
+  }))
+  const orderLines = buildOrderLines(itemsWithEditedCode, editState, selected)
+
   return (
     <div>
       <WeekBar
@@ -105,18 +140,33 @@ export default function CoopOrderPage() {
         onThisWeek={() => setWeekStart(getMondayOf(new Date()))}
         busy={loading}
         tools={
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={handleSave}
-            disabled={saving || loading || !data}
-          >
-            {saving ? '保存しています' : 'この週を保存'}
-          </button>
+          <>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setListOpen(true)}
+              disabled={loading || orderLines.length === 0}
+              title={orderLines.length === 0 ? '発注する数量が入っていません' : undefined}
+            >
+              発注リストを出す
+              {orderLines.length > 0 && <span className="num"> {orderLines.length}品</span>}
+            </button>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={handleSave}
+              disabled={saving || loading || !data}
+            >
+              {saving ? '保存しています' : 'この週を保存'}
+            </button>
+          </>
         }
       />
 
-      <p className="notice">生協発注は献立の食数とは連動しません。必要な数を週ごとに入力してください。</p>
+      <p className="notice">
+        生協発注は献立の食数とは連動しません。必要な数を週ごとに入力してください。
+        入力したら「発注リストを出す」で、eふれんずの「注文コードでご注文」に貼れる形にできます。
+      </p>
 
       {error && (
         <p className="notice notice--error" role="alert">
@@ -137,10 +187,25 @@ export default function CoopOrderPage() {
           return (
             <section className="sheet" key={item.id}>
               <div className="sheet__head">
-                <h2>{item.name}</h2>
+                <label
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.has(item.id)}
+                    onChange={() => toggleSelected(item.id)}
+                    aria-label={`${item.name}を発注リストに含める`}
+                  />
+                  <h2>{item.name}</h2>
+                </label>
                 <span style={{ fontSize: 'var(--fs-sm)', color: 'rgba(242,245,243,0.7)' }}>
                   {item.order_type === 'weekly' ? '週にまとめて発注' : '日ごとに個数を指定'}
                 </span>
+                {!es.orderCode && (
+                  <span className="tag tag--warn" title="注文コードがないと、eふれんずで品物を探し直すことになります">
+                    コード未登録
+                  </span>
+                )}
                 {item.order_type === 'daily' && (
                   <div className="sheet__meta">
                     <span>
@@ -155,6 +220,18 @@ export default function CoopOrderPage() {
               </div>
 
               <div className="sheet__body">
+                <label className="field" style={{ maxWidth: 260 }}>
+                  <span>eふれんずの注文コード</span>
+                  <input
+                    className="input"
+                    type="text"
+                    inputMode="numeric"
+                    value={es.orderCode}
+                    onChange={(e) => updateOrderCode(item.id, e.target.value.trim())}
+                    placeholder="カタログの注文番号"
+                  />
+                </label>
+
                 {item.order_type === 'weekly' ? (
                   <div style={{ display: 'flex', gap: '1.2rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
                     <label className="field" style={{ marginBottom: 0 }}>
@@ -215,6 +292,15 @@ export default function CoopOrderPage() {
             </section>
           )
         })
+      )}
+
+      {listOpen && data && (
+        <CoopOrderListModal
+          lines={orderLines}
+          weekStart={data.week_start}
+          weekEnd={data.week_end}
+          onClose={() => setListOpen(false)}
+        />
       )}
     </div>
   )

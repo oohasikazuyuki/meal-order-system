@@ -11,7 +11,7 @@ use DateTime;
  *   → 週のアイテム一覧と発注数量を返す
  *
  * POST /api/coop-orders.json
- *   { week_start, items: [{ item_id, quantity, notes?, daily?: {date: qty} }] }
+ *   { week_start, items: [{ item_id, quantity, notes?, order_code?, daily?: {date: qty} }] }
  *   → 保存
  *
  * GET  /api/coop-orders/items.json
@@ -85,6 +85,7 @@ class CoopOrdersController extends AppController
             $row = [
                 'id'         => $item->id,
                 'name'       => $item->name,
+                'order_code' => $item->order_code,
                 'unit'       => $item->unit,
                 'order_type' => $item->order_type,
                 'sort_order' => $item->sort_order,
@@ -140,6 +141,16 @@ class CoopOrdersController extends AppController
         foreach ((array)$items as $item) {
             $itemId = (int)($item['item_id'] ?? 0);
             if (!$itemId) continue;
+
+            // 注文コードは品目マスタ側の情報だが、週の数量と同じ画面で直すので
+            // 同じ保存操作で拾う。現場に保存ボタンを2つ押させない。
+            if (array_key_exists('order_code', $item)) {
+                $code = trim((string)$item['order_code']);
+                $conn->execute(
+                    'UPDATE coop_items SET order_code = :code, modified = NOW() WHERE id = :id',
+                    ['code' => $code !== '' ? $code : null, 'id' => $itemId]
+                );
+            }
 
             if (!empty($item['daily']) && is_array($item['daily'])) {
                 // 日別保存
