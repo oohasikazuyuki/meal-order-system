@@ -1,28 +1,30 @@
 <?php
 namespace App\Controller\Api;
 
+use App\Application\Exception\ErrorCode;
 use App\Controller\AppController;
 use DateTime;
 
 class AiController extends AppController
 {
-    private function ensureAiPublicEnabled(): bool
-    {
-        $enabled = strtolower((string)(getenv('AI_PUBLIC_ENABLED') ?: 'false')) === 'true';
-        if ($enabled) {
-            return true;
-        }
-        $this->response = $this->response->withStatus(404);
-        $this->set(['ok' => false, 'message' => 'Not Found']);
-        $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
-        return false;
-    }
+    private AiMenuLogicHelper $logic;
 
     public function initialize(): void
     {
         parent::initialize();
         $this->MenuMasters = $this->fetchTable('MenuMasters');
         $this->Suppliers = $this->fetchTable('Suppliers');
+        $this->logic = new AiMenuLogicHelper();
+    }
+
+    private function ensureAiPublicEnabled(): bool
+    {
+        $enabled = strtolower((string)(getenv('AI_PUBLIC_ENABLED') ?: 'false')) === 'true';
+        if ($enabled) {
+            return true;
+        }
+        $this->respondError(404, ErrorCode::COMMON_NOT_FOUND, 'Not Found');
+        return false;
     }
 
     /**
@@ -40,9 +42,9 @@ class AiController extends AppController
         }
         $date = (string)($this->request->getData('date') ?? '');
         if (!$this->isValidDate($date)) {
-            $this->response = $this->response->withStatus(400);
-            $this->set(['ok' => false, 'message' => 'date (YYYY-MM-DD) は必須です']);
-            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+            $this->respondError(400, ErrorCode::ORDER_VALIDATION_DATE, 'date (YYYY-MM-DD) は必須です', [
+                'date' => 'YYYY-MM-DD 形式で指定してください',
+            ]);
             return;
         }
 
@@ -50,19 +52,19 @@ class AiController extends AppController
         $blockId = ($blockId !== null && $blockId !== '') ? (int)$blockId : null;
         $existingByMeal = (array)($this->request->getData('existing_by_meal') ?? []);
 
-        $candidates = $this->fetchCandidateMenuNames($blockId);
-        if (empty($candidates)) {
-            $this->response = $this->response->withStatus(400);
-            $this->set(['ok' => false, 'message' => '提案対象のメニューマスタがありません']);
-            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+        $candidateItems = $this->fetchCandidateMenuNames($blockId);
+        if (empty($candidateItems)) {
+            $this->respondError(400, ErrorCode::MENU_VALIDATION, '提案対象のメニューマスタがありません');
             return;
         }
 
-        [$suggestions, $rawText] = $this->generateSuggestionsWithOllama($date, $candidates, $existingByMeal);
+        [$suggestions, $rawText] = $this->generateSuggestionsWithOllama($date, $candidateItems, $existingByMeal);
         if ($suggestions === null) {
-            $this->response = $this->response->withStatus(502);
-            $this->set(['ok' => false, 'message' => 'AI提案の生成に時間がかかっています。しばらくしてから再実行してください。']);
-            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+            $this->respondError(
+                502,
+                ErrorCode::AI_PARSE,
+                'AI提案の生成に時間がかかっています。しばらくしてから再実行してください。'
+            );
             return;
         }
 
@@ -71,7 +73,7 @@ class AiController extends AppController
             'date' => $date,
             'block_id' => $blockId,
             'suggestions' => $suggestions,
-            'candidate_count' => count($candidates),
+            'candidate_count' => count($candidateItems),
             'raw' => $rawText,
         ]);
         $this->viewBuilder()->setOption('serialize', ['ok', 'date', 'block_id', 'suggestions', 'candidate_count', 'raw']);
@@ -88,16 +90,15 @@ class AiController extends AppController
         }
         $blockId = $this->request->getData('block_id');
         $blockId = ($blockId !== null && $blockId !== '') ? (int)$blockId : null;
-        $candidates = $this->fetchCandidateMenuNames($blockId);
+        $candidateItems = $this->fetchCandidateMenuNames($blockId);
+        $candidateNames = $this->candidateItemsToNames($candidateItems);
         $name = trim((string)($this->request->getData('name') ?? ''));
         $nameGenerated = false;
         if ($name === '') {
-            $name = $this->generateMenuNameWithOllama($candidates) ?? '';
+            $name = $this->generateMenuNameWithOllama($candidateNames) ?? '';
             $nameGenerated = $name !== '';
             if ($name === '') {
-                $this->response = $this->response->withStatus(502);
-                $this->set(['ok' => false, 'message' => '料理名のAI生成に失敗しました']);
-                $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+                $this->respondError(502, ErrorCode::AI_PARSE, '料理名のAI生成に失敗しました');
                 return;
             }
         }
@@ -107,11 +108,14 @@ class AiController extends AppController
             ->orderBy(['id' => 'ASC'])
             ->toArray();
 
-        [$draft, $rawText] = $this->generateMenuMasterDraftWithOllama($name, $candidates, $suppliers);
+        [$draft, $rawText] = $this->generateMenuMasterDraftWithOllama($name, $candidateNames, $suppliers);
         if ($draft === null) {
-            $this->response = $this->response->withStatus(502);
-            $this->set(['ok' => false, 'message' => 'AI下書きの生成に時間がかかっています。しばらくしてから再実行してください。', 'raw' => $rawText ?: '']);
-            $this->viewBuilder()->setOption('serialize', ['ok', 'message', 'raw']);
+            $this->respondError(
+                502,
+                ErrorCode::AI_PARSE,
+                'AI下書きの生成に時間がかかっています。しばらくしてから再実行してください。',
+                ['raw' => $rawText ?: '']
+            );
             return;
         }
 
@@ -125,9 +129,15 @@ class AiController extends AppController
         $this->viewBuilder()->setOption('serialize', ['ok', 'name', 'name_generated', 'draft', 'raw']);
     }
 
+    /**
+     * メニューマスタから候補アイテムリストを取得する。
+     * 各アイテムは ['name' => string, 'dish_category' => string|null] の形式。
+     */
     private function fetchCandidateMenuNames(?int $blockId): array
     {
-        $query = $this->MenuMasters->find()->select(['name'])->orderBy(['MenuMasters.name' => 'ASC']);
+        $query = $this->MenuMasters->find()
+            ->select(['name', 'dish_category'])
+            ->orderBy(['MenuMasters.name' => 'ASC']);
         if ($blockId !== null) {
             $query->where(function ($exp) use ($blockId) {
                 return $exp->or([
@@ -137,20 +147,51 @@ class AiController extends AppController
             });
         }
 
-        $names = [];
+        $items = [];
+        $seen = [];
         foreach ($query->toArray() as $row) {
             $name = trim((string)($row->name ?? ''));
-            if ($name !== '') {
-                $names[$name] = true;
+            if ($name !== '' && !isset($seen[$name])) {
+                $seen[$name] = true;
+                $items[] = [
+                    'name'          => $name,
+                    'dish_category' => $row->dish_category ?? null,
+                ];
             }
         }
-        return array_keys($names);
+        return $items;
     }
 
-    private function generateSuggestionsWithOllama(string $date, array $candidates, array $existingByMeal): array
+    /** 候補アイテムから名前のみの配列を返す（menu-master-draft 等で使用） */
+    private function candidateItemsToNames(array $items): array
+    {
+        return $this->logic->candidateItemsToNames($items);
+    }
+
+    /**
+     * AI献立提案（複数料理区分対応）
+     *
+     * @param array $candidateItems [{name: string, dish_category: string|null}, ...]
+     * @param array $existingByMeal {meal_type_str: string[]}
+     * @return array [suggestions, rawText]
+     *   suggestions: {meal_type_str: {dish_category: name}}
+     */
+    private function generateSuggestionsWithOllama(string $date, array $candidateItems, array $existingByMeal): array
     {
         $season = $this->seasonLabel($date);
-        $candidateSet = array_fill_keys($candidates, true);
+
+        // 名前→dish_category のマップ（バリデーション用）
+        $candidateSet = [];
+        foreach ($candidateItems as $item) {
+            $candidateSet[$item['name']] = $item['dish_category'] ?? '';
+        }
+
+        // 候補リストを「名前:区分」形式で最大30件
+        $candidateLines = [];
+        foreach (array_slice($candidateItems, 0, 30) as $item) {
+            $cat = $item['dish_category'] ?? '';
+            $candidateLines[] = $cat !== '' ? "{$item['name']}:{$cat}" : $item['name'];
+        }
 
         $existingText = [];
         foreach ([1, 2, 3, 4] as $mt) {
@@ -163,27 +204,30 @@ class AiController extends AppController
             "あなたは保育施設の献立提案アシスタントです。",
             "日付: {$date}（{$season}）",
             "食事種別: 1=朝食, 2=昼食, 3=夕食, 4=おやつ",
-            "既存メニュー:",
+            "料理区分: 主食（ご飯・パンなど）、主菜（メインのおかず）、副菜（サブのおかず）、汁物（味噌汁など）、おやつ、丼物（主食と主菜が一体）",
+            "既存メニュー（避けること）:",
             implode("\n", $existingText),
-            "候補メニュー（この中からのみ選ぶこと）:",
-            implode('、', array_slice($candidates, 0, 20)),
-            "出力はJSONのみ。形式:",
-            '{"suggestions":{"1":["..."],"2":["..."],"3":["..."],"4":["..."]}}',
-            "各食事は最大1件。既存メニュー名は避ける。",
+            "候補メニュー一覧（名前:区分の形式、この中からのみ選ぶ）:",
+            implode('、', $candidateLines),
+            "出力はJSONのみ。各食事種別を料理区分ごとに提案する。",
+            "丼物の場合は 主食・主菜 の代わりに 丼物 として1件提案。",
+            '{"suggestions":{"1":{"主食":"...","主菜":"..."},"2":{"主食":"...","主菜":"...","副菜":"...","汁物":"..."},"3":{"主食":"...","主菜":"...","副菜":"...","汁物":"..."},"4":{"おやつ":"..."}}}',
+            "既存メニュー名は避け、候補にある名前のみ使用すること。",
         ]);
 
-        $res = $this->callOllama($prompt, 120, ['num_predict' => 160, 'num_ctx' => 768, 'temperature' => 0.2]);
+        $res = $this->callOllama($prompt, 120, ['num_predict' => 320, 'num_ctx' => 1024, 'temperature' => 0.2]);
         if (!$res['ok']) {
-            // 1回だけ短縮プロンプトで再試行
+            // 短縮プロンプトで再試行
+            $shortCandidates = implode('、', array_map(fn($i) => $i['name'], array_slice($candidateItems, 0, 15)));
             $retryPrompt = implode("\n", [
-                "次の候補から、朝昼夕おやつを1件ずつ選びJSONだけ返す。",
-                "候補: " . implode('、', array_slice($candidates, 0, 12)),
-                '{"suggestions":{"1":["..."],"2":["..."],"3":["..."],"4":["..."]}}',
+                "保育施設の献立を料理区分ごとに提案。候補のみ使用。",
+                "候補: {$shortCandidates}",
+                '{"suggestions":{"1":{"主食":"...","主菜":"..."},"2":{"主食":"...","主菜":"...","副菜":"...","汁物":"..."},"3":{"主食":"...","主菜":"...","副菜":"...","汁物":"..."},"4":{"おやつ":"..."}}}',
             ]);
-            $res = $this->callOllama($retryPrompt, 80, ['num_predict' => 120, 'num_ctx' => 512, 'temperature' => 0.1]);
+            $res = $this->callOllama($retryPrompt, 80, ['num_predict' => 256, 'num_ctx' => 768, 'temperature' => 0.1]);
         }
         if (!$res['ok']) {
-            return [$this->fallbackSuggestions($date, $candidates, $existingByMeal), 'fallback:no_response'];
+            return [$this->fallbackSuggestions($date, $candidateItems, $existingByMeal), 'fallback:no_response'];
         }
 
         $rawText = trim((string)($res['text'] ?? ''));
@@ -192,28 +236,24 @@ class AiController extends AppController
             $parsed = $this->extractJsonObject($rawText);
         }
         if (is_array($parsed)) {
-            $rawSuggestions = (array)($parsed['suggestions'] ?? []);
-            $normalized = [];
-            foreach ([1, 2, 3, 4] as $mt) {
-                $vals = isset($rawSuggestions[(string)$mt]) ? (array)$rawSuggestions[(string)$mt] : (array)($rawSuggestions[$mt] ?? []);
-                $filtered = [];
-                foreach ($vals as $name) {
-                    $name = trim((string)$name);
-                    if ($name === '' || !isset($candidateSet[$name])) continue;
-                    $filtered[$name] = true;
-                    if (count($filtered) >= 1) break;
-                }
-                $normalized[(string)$mt] = array_keys($filtered);
+            $normalized = $this->normalizeCategorySuggestions((array)($parsed['suggestions'] ?? []), $candidateSet);
+            if (!empty(array_filter($normalized, fn($v) => !empty($v)))) {
+                return [$normalized, $rawText];
             }
-            return [$normalized, $rawText];
         }
 
-        $loose = $this->extractSuggestionsFromPartialText($rawText, $candidateSet);
-        if ($loose !== null) {
-            return [$loose, $rawText];
-        }
+        return [$this->fallbackSuggestions($date, $candidateItems, $existingByMeal), $rawText];
+    }
 
-        return [$this->fallbackSuggestions($date, $candidates, $existingByMeal), $rawText];
+    /**
+     * AI提案レスポンスを正規化する。
+     * @param array $raw AI返却のsuggestionsオブジェクト
+     * @param array $candidateSet [name => dish_category]
+     * @return array {meal_type_str: {dish_category: name}}
+     */
+    private function normalizeCategorySuggestions(array $raw, array $candidateSet): array
+    {
+        return $this->logic->normalizeCategorySuggestions($raw, $candidateSet);
     }
 
     private function generateMenuMasterDraftWithOllama(string $name, array $candidates, array $suppliers): array
@@ -250,66 +290,12 @@ class AiController extends AppController
 
     private function normalizeMenuMasterDraft(array $raw, array $suppliers): array
     {
-        $unitAllowed = array_fill_keys(['g', 'kg', 'ml', 'L', '個', '枚', '本', '袋', '缶', '束', '合', '大さじ', '小さじ', '切れ', '適量'], true);
-        $grams = (float)($raw['grams_per_person'] ?? 0);
-        if (!is_finite($grams) || $grams < 0 || $grams > 5000) {
-            $grams = 0;
-        }
-        $memo = trim((string)($raw['memo'] ?? ''));
-        $ingredientsRaw = (array)($raw['ingredients'] ?? []);
-        $ingredients = [];
-
-        foreach ($ingredientsRaw as $item) {
-            if (!is_array($item)) continue;
-            $ingName = trim((string)($item['name'] ?? ''));
-            if ($ingName === '') continue;
-
-            $amount = (float)($item['amount'] ?? 0);
-            if (!is_finite($amount) || $amount < 0 || $amount > 100000) {
-                $amount = 0;
-            }
-
-            $unit = trim((string)($item['unit'] ?? 'g'));
-            if (!isset($unitAllowed[$unit])) {
-                $unit = 'g';
-            }
-
-            $personsPerUnit = $item['persons_per_unit'] ?? null;
-            $personsPerUnit = ($personsPerUnit !== null && $personsPerUnit !== '') ? (int)$personsPerUnit : null;
-            if ($personsPerUnit !== null && $personsPerUnit <= 0) {
-                $personsPerUnit = null;
-            }
-
-            $supplierName = trim((string)($item['supplier_name'] ?? ''));
-            $supplierId = $this->resolveSupplierIdByName($supplierName, $suppliers);
-
-            $ingredients[] = [
-                'name' => $ingName,
-                'amount' => $amount,
-                'unit' => $unit,
-                'persons_per_unit' => $personsPerUnit,
-                'supplier_id' => $supplierId,
-            ];
-            if (count($ingredients) >= 12) break;
-        }
-
-        return [
-            'grams_per_person' => $grams,
-            'memo' => $memo,
-            'ingredients' => $ingredients,
-        ];
+        return $this->logic->normalizeMenuMasterDraft($raw, $suppliers);
     }
 
     private function resolveSupplierIdByName(string $name, array $suppliers): ?int
     {
-        if ($name === '') return null;
-        foreach ($suppliers as $s) {
-            $sName = (string)($s->name ?? '');
-            if ($sName !== '' && ($sName === $name || str_contains($name, $sName) || str_contains($sName, $name))) {
-                return (int)$s->id;
-            }
-        }
-        return null;
+        return $this->logic->resolveSupplierIdByName($name, $suppliers);
     }
 
     private function generateMenuNameWithOllama(array $candidates): ?string
@@ -535,71 +521,56 @@ class AiController extends AppController
 
     private function extractSuggestionsFromPartialText(string $text, array $candidateSet): ?array
     {
-        $out = [];
-        foreach ([1, 2, 3, 4] as $mt) {
-            $matched = preg_match('/"' . $mt . '"\s*:\s*\[\s*"([^"]+)"/u', $text, $m);
-            if (!$matched) {
-                $out[(string)$mt] = [];
-                continue;
-            }
-            $name = trim((string)$m[1]);
-            if ($name === '' || !isset($candidateSet[$name])) {
-                $out[(string)$mt] = [];
-                continue;
-            }
-            $out[(string)$mt] = [$name];
-        }
-
-        $hasAny = false;
-        foreach ($out as $vals) {
-            if (!empty($vals)) {
-                $hasAny = true;
-                break;
-            }
-        }
-        return $hasAny ? $out : null;
+        return $this->logic->extractSuggestionsFromPartialText($text, $candidateSet);
     }
 
     private function seasonLabel(string $date): string
     {
-        $dt = new DateTime($date);
-        $m = (int)$dt->format('n');
-        return match (true) {
-            in_array($m, [3, 4, 5], true) => '春',
-            in_array($m, [6, 7, 8], true) => '夏',
-            in_array($m, [9, 10, 11], true) => '秋',
-            default => '冬',
-        };
+        return $this->logic->seasonLabel($date);
     }
 
     private function isValidDate(string $date): bool
     {
-        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
-            return false;
-        }
-        $dt = DateTime::createFromFormat('Y-m-d', $date);
-        return $dt && $dt->format('Y-m-d') === $date;
+        return $this->logic->isValidDate($date);
     }
 
-    private function fallbackSuggestions(string $date, array $candidates, array $existingByMeal): array
+    /**
+     * AI呼び出し失敗時のフォールバック。
+     *
+     * @param array $candidateItems [{name, dish_category}, ...]
+     */
+    private function fallbackSuggestions(string $date, array $candidateItems, array $existingByMeal): array
     {
-        $result = [];
-        $count = max(1, count($candidates));
-        foreach ([1, 2, 3, 4] as $mt) {
-            $vals = isset($existingByMeal[(string)$mt]) ? (array)$existingByMeal[(string)$mt] : (array)($existingByMeal[$mt] ?? []);
-            $existing = array_fill_keys(array_filter(array_map(fn($v) => trim((string)$v), $vals), fn($v) => $v !== ''), true);
+        return $this->logic->fallbackSuggestions($date, $candidateItems, $existingByMeal);
+    }
 
-            $base = abs(crc32($date . ':' . $mt)) % $count;
-            $picked = '';
-            for ($i = 0; $i < $count; $i++) {
-                $idx = ($base + $i) % $count;
-                $name = trim((string)($candidates[$idx] ?? ''));
-                if ($name === '' || isset($existing[$name])) continue;
-                $picked = $name;
-                break;
-            }
-            $result[(string)$mt] = $picked === '' ? [] : [$picked];
+    private function respondError(int $statusCode, string $errorCode, string $message, array $details = []): void
+    {
+        $this->response = $this->response->withStatus($statusCode);
+        $this->set([
+            'ok' => false,
+            'message' => $message,
+            'error' => [
+                'code' => $errorCode,
+                'message' => $message,
+                'details' => $details,
+                'request_id' => $this->requestId(),
+            ],
+        ]);
+        $this->viewBuilder()->setOption('serialize', ['ok', 'message', 'error']);
+    }
+
+    private function requestId(): string
+    {
+        $requestId = trim((string)$this->request->getHeaderLine('X-Request-Id'));
+        if ($requestId !== '') {
+            return $requestId;
         }
-        return $result;
+
+        try {
+            return 'req_' . bin2hex(random_bytes(8));
+        } catch (\Exception) {
+            return 'req_' . str_replace('.', '', (string)microtime(true));
+        }
     }
 }

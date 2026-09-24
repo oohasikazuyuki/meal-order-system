@@ -22,7 +22,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
   const noShellPaths = ['/login', '/400', '/500']
-  const isNoShellPath = noShellPaths.includes(pathname)
+  const isNoShellPath = pathname !== null && noShellPaths.includes(pathname)
   const [user, setUser] = useState<AuthUser | null>(null)
   const [checking, setChecking] = useState(true)
   const [sidebarOpen, setSidebarOpen] = useState(false)

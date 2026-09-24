@@ -5,6 +5,7 @@
 backend/vendor/
 backend/tmp/
 backend/logs/
+backend/.phpunit.cache/
 
 # Docker ボリューム
 *.log

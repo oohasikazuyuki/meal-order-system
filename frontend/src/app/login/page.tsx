@@ -29,7 +29,7 @@ function LoginForm() {
       const res = await login(loginId, password)
       if (res.data.ok) {
         saveAuth(res.data.token, res.data.user)
-        const redirect = searchParams.get('redirect') || '/'
+        const redirect = searchParams?.get('redirect') || '/'
         router.push(redirect)
       }
     } catch {

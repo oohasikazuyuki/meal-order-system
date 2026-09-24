@@ -35,7 +35,7 @@ export default function DashboardPage() {
     3: { count: 0, grams: 0, saved: 0 },
     4: { count: 0, grams: 0, saved: 0 },
   }
-  let menuNames: Record<MealType, string | null> = { 1: null, 2: null, 3: null, 4: null }
+  const menuNames: Record<MealType, string | null> = { 1: null, 2: null, 3: null, 4: null }
   let savedCount = 0
   let unsavedCount = 0
 
