@@ -1,11 +1,33 @@
 <?php
 namespace App\Controller;
 
+use App\Service\AuthService;
 use Cake\Controller\Controller;
 use Cake\Event\EventInterface;
 
 class AppController extends Controller
 {
+    protected function requireAuthenticatedUser(): ?array
+    {
+        $authService = new AuthService();
+        $token = $authService->extractBearerToken(
+            $this->request->getHeaderLine('Authorization')
+        );
+        $result = $authService->getAuthenticatedUser($token);
+
+        if (!$result['success']) {
+            $this->response = $this->response->withStatus($result['status']);
+            $this->set([
+                'ok' => false,
+                'message' => $result['message'],
+            ]);
+            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+            return null;
+        }
+
+        return $result['user'];
+    }
+
     public function initialize(): void
     {
         parent::initialize();

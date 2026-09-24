@@ -2,14 +2,17 @@
 namespace App\Service;
 
 use App\Repository\UserRepository;
+use Cake\I18n\FrozenTime;
 
 class UserService
 {
     private UserRepository $userRepository;
+    private CredentialCryptoService $credentialCryptoService;
 
     public function __construct()
     {
         $this->userRepository = new UserRepository();
+        $this->credentialCryptoService = new CredentialCryptoService();
     }
 
     /**
@@ -18,11 +21,16 @@ class UserService
     public function getUserList(): array
     {
         $users = $this->userRepository->findAll([
-            'select' => ['id', 'name', 'login_id', 'role', 'block_id', 'created'],
+            'select' => ['id', 'name', 'login_id', 'kamaho_login_id', 'kamaho_password_enc', 'kamaho_linked_at', 'role', 'block_id', 'created'],
             'order' => ['id' => 'ASC']
         ]);
-        
-        return $this->fixEncoding($users);
+
+        $normalized = $this->fixEncoding($users);
+        return array_map(function ($user) {
+            unset($user['kamaho_password_enc']);
+            $user['has_kamaho_link'] = !empty($user['kamaho_login_id']) && !empty($user['kamaho_linked_at']);
+            return $user;
+        }, $normalized);
     }
 
     /**
@@ -74,6 +82,14 @@ class UserService
             ];
         }
 
+        if (!empty(trim((string)($data['kamaho_login_id'] ?? ''))) && empty((string)($data['kamaho_password'] ?? ''))) {
+            return [
+                'success' => false,
+                'status' => 400,
+                'message' => '鎌倉連携IDを設定する場合は鎌倉連携パスワードも入力してください'
+            ];
+        }
+
         // 権限の検証
         if (empty($data['role']) || !in_array($data['role'], ['admin', 'user'], true)) {
             return [
@@ -89,6 +105,7 @@ class UserService
         }
 
         $data['password'] = password_hash($data['password'], PASSWORD_BCRYPT);
+        $this->applyKamahoCredentialPayload($data);
 
         // block_id: 空文字またはnullの場合はnullに統一
         if (array_key_exists('block_id', $data)) {
@@ -105,7 +122,10 @@ class UserService
                 'email' => true,
                 'password' => true, 
                 'role' => true, 
-                'block_id' => true
+                'block_id' => true,
+                'kamaho_login_id' => true,
+                'kamaho_password_enc' => true,
+                'kamaho_linked_at' => true,
             ]
         ]);
 
@@ -120,6 +140,8 @@ class UserService
                 'login_id' => $user->login_id,
                 'role' => $user->role,
                 'block_id' => $user->block_id,
+                'kamaho_login_id' => $user->kamaho_login_id,
+                'has_kamaho_link' => !empty($user->kamaho_login_id) && !empty($user->kamaho_linked_at),
                 'created' => $user->created ? $user->created->format('Y-m-d H:i:s') : null
             ] : null,
             'errors' => $success ? [] : $user->getErrors()
@@ -147,6 +169,8 @@ class UserService
             unset($data['password']);
         }
 
+        $this->applyKamahoCredentialPayload($data);
+
         // 権限の検証
         if (isset($data['role']) && !in_array($data['role'], ['admin', 'user'], true)) {
             return [
@@ -167,7 +191,10 @@ class UserService
                 'login_id' => true, 
                 'password' => true, 
                 'role' => true, 
-                'block_id' => true
+                'block_id' => true,
+                'kamaho_login_id' => true,
+                'kamaho_password_enc' => true,
+                'kamaho_linked_at' => true,
             ]
         ]);
 
@@ -181,10 +208,37 @@ class UserService
                 'login_id' => $user->login_id,
                 'role' => $user->role,
                 'block_id' => $user->block_id,
+                'kamaho_login_id' => $user->kamaho_login_id,
+                'has_kamaho_link' => !empty($user->kamaho_login_id) && !empty($user->kamaho_linked_at),
                 'created' => $user->created ? $user->created->format('Y-m-d H:i:s') : null
             ] : null,
             'errors' => $success ? [] : $user->getErrors()
         ];
+    }
+
+    private function applyKamahoCredentialPayload(array &$data): void
+    {
+        if (!array_key_exists('kamaho_login_id', $data) && !array_key_exists('kamaho_password', $data)) {
+            return;
+        }
+
+        $kamahoLoginId = trim((string)($data['kamaho_login_id'] ?? ''));
+        $kamahoPassword = (string)($data['kamaho_password'] ?? '');
+
+        if ($kamahoLoginId === '') {
+            $data['kamaho_login_id'] = null;
+            $data['kamaho_password_enc'] = null;
+            $data['kamaho_linked_at'] = null;
+            unset($data['kamaho_password']);
+            return;
+        }
+
+        $data['kamaho_login_id'] = $kamahoLoginId;
+        if ($kamahoPassword !== '') {
+            $data['kamaho_password_enc'] = $this->credentialCryptoService->encrypt($kamahoPassword);
+            $data['kamaho_linked_at'] = FrozenTime::now();
+        }
+        unset($data['kamaho_password']);
     }
 
     /**

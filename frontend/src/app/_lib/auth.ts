@@ -14,6 +14,12 @@ function deleteCookie(name: string): void {
   document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`
 }
 
+function getCookie(name: string): string | null {
+  const pattern = new RegExp(`(?:^|; )${name}=([^;]*)`)
+  const match = document.cookie.match(pattern)
+  return match ? decodeURIComponent(match[1]) : null
+}
+
 export function saveAuth(token: string, user: AuthUser): void {
   localStorage.setItem('auth_token', token)
   localStorage.setItem('auth_user', JSON.stringify(user))
@@ -43,5 +49,8 @@ export function getStoredToken(): string | null {
 }
 
 export function isLoggedIn(): boolean {
-  return !!getStoredToken()
+  if (typeof window === 'undefined') return false
+  const token = getStoredToken()
+  const cookieToken = getCookie(COOKIE_NAME)
+  return !!token && !!cookieToken && token === cookieToken
 }

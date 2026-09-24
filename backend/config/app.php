@@ -74,6 +74,15 @@ return [
             'className' => 'Cake\Cache\Engine\FileEngine',
             'path' => CACHE,
         ],
+        // kamaho 連携の応答を短時間だけ保持する。
+        // 週表示は同時に7日分を要求するため、連携が遅い/落ちているときの待ち時間を抑える。
+        'kamaho' => [
+            'className' => 'Cake\Cache\Engine\FileEngine',
+            'prefix' => 'myapp_kamaho_',
+            'path' => CACHE,
+            'serialize' => true,
+            'duration' => '+2 minutes',
+        ],
         '_cake_core_' => [
             'className' => 'Cake\Cache\Engine\FileEngine',
             'prefix' => 'myapp_cake_core_',

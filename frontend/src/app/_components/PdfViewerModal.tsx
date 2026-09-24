@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Document, Page, pdfjs } from 'react-pdf'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
@@ -18,6 +18,30 @@ export default function PdfViewerModal({ url, fileName, title, onClose }: PdfVie
   const [numPages, setNumPages] = useState<number>(0)
   const [pageNumber, setPageNumber] = useState(1)
   const [loadError, setLoadError] = useState<string | null>(null)
+  // 表示領域の幅。900px で頭打ちにすると横長の献立表が読めない大きさになる
+  const [fitWidth, setFitWidth] = useState(1000)
+  const [zoom, setZoom] = useState(1)
+  const viewRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const fit = () => {
+      const available = viewRef.current?.clientWidth ?? window.innerWidth
+      setFitWidth(Math.max(320, available - 32))
+    }
+    fit()
+    window.addEventListener('resize', fit)
+    return () => window.removeEventListener('resize', fit)
+  }, [])
+
+  const pageWidth = Math.round(fitWidth * zoom)
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   const onLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
     setNumPages(numPages)
@@ -26,7 +50,7 @@ export default function PdfViewerModal({ url, fileName, title, onClose }: PdfVie
   }, [])
 
   const onLoadError = useCallback(() => {
-    setLoadError('PDFの読み込みに失敗しました')
+    setLoadError('このPDFを表示できませんでした。ダウンロードして開いてください。')
   }, [])
 
   const handlePrint = () => {
@@ -41,170 +65,127 @@ export default function PdfViewerModal({ url, fileName, title, onClose }: PdfVie
   }
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 1000,
-      background: 'rgba(0,0,0,0.75)',
-      display: 'flex', flexDirection: 'column',
-    }}>
-      {/* ヘッダー */}
-      <div style={{
-        background: '#1a3a5c', padding: '0.75rem 1.25rem',
-        display: 'flex', alignItems: 'center', gap: '1rem',
-        flexShrink: 0,
-      }}>
-        <span style={{ color: '#fff', fontWeight: 700, fontSize: '1rem', flex: 1 }}>
-          📄 {title}
-        </span>
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 1000,
+        background: 'rgba(20,32,28,0.8)',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      <div
+        className="on-ink"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.6rem',
+          flexWrap: 'wrap',
+          padding: '0.5rem 0.9rem',
+          background: 'var(--ink)',
+          color: 'var(--on-ink)',
+          flexShrink: 0,
+        }}
+      >
+        <h2 style={{ flex: 1, fontSize: 'var(--fs-base)', minWidth: 160 }}>{title}</h2>
 
-        {/* ページネーション */}
         {numPages > 1 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             <button
-              onClick={() => setPageNumber(p => Math.max(p - 1, 1))}
+              type="button"
+              className="btn btn--sm"
+              onClick={() => setPageNumber((p) => Math.max(p - 1, 1))}
               disabled={pageNumber <= 1}
-              style={headerBtn(pageNumber <= 1)}
             >
-              ← 前
+              前のページ
             </button>
-            <span style={{ color: '#fff', fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
+            <span className="num" style={{ fontSize: 'var(--fs-sm)', whiteSpace: 'nowrap' }}>
               {pageNumber} / {numPages}
             </span>
             <button
-              onClick={() => setPageNumber(p => Math.min(p + 1, numPages))}
+              type="button"
+              className="btn btn--sm"
+              onClick={() => setPageNumber((p) => Math.min(p + 1, numPages))}
               disabled={pageNumber >= numPages}
-              style={headerBtn(pageNumber >= numPages)}
             >
-              次 →
+              次のページ
             </button>
           </div>
         )}
 
-        {/* ダウンロード */}
-        <a
-          href={url}
-          download={fileName}
-          style={{
-            padding: '0.45rem 1rem', background: '#059669', color: '#fff',
-            borderRadius: 8, fontSize: '0.85rem', fontWeight: 600,
-            textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.4rem',
-          }}
-        >
-          💾 ダウンロード
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+          <button
+            type="button"
+            className="btn btn--sm"
+            onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.25) * 100) / 100))}
+            disabled={zoom <= 0.5}
+            aria-label="縮小"
+          >
+            小さく
+          </button>
+          <span className="num" style={{ fontSize: 'var(--fs-sm)', minWidth: '3.5em', textAlign: 'center' }}>
+            {Math.round(zoom * 100)}%
+          </span>
+          <button
+            type="button"
+            className="btn btn--sm"
+            onClick={() => setZoom((z) => Math.min(4, Math.round((z + 0.25) * 100) / 100))}
+            disabled={zoom >= 4}
+            aria-label="拡大"
+          >
+            大きく
+          </button>
+          <button type="button" className="btn btn--sm" onClick={() => setZoom(1)} disabled={zoom === 1}>
+            幅に合わせる
+          </button>
+        </div>
+
+        <a href={url} download={fileName} className="btn">
+          ダウンロード
         </a>
-
-        {/* 印刷 */}
-        <button
-          onClick={handlePrint}
-          style={{
-            padding: '0.45rem 1rem', background: 'rgba(255,255,255,0.15)', color: '#fff',
-            border: '1px solid rgba(255,255,255,0.3)', borderRadius: 8,
-            fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer',
-          }}
-        >
-          🖨 印刷
+        <button type="button" className="btn" onClick={handlePrint}>
+          印刷
         </button>
-
-        {/* 閉じる */}
-        <button
-          onClick={onClose}
-          style={{
-            padding: '0.45rem 1rem', background: '#dc2626', color: '#fff',
-            border: 'none', borderRadius: 8,
-            fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer',
-          }}
-        >
-          ✕ 閉じる
+        <button type="button" className="btn" onClick={onClose}>
+          閉じる
         </button>
       </div>
 
-      {/* PDF 表示エリア */}
-      <div style={{
-        flex: 1, overflowY: 'auto', background: '#525659',
-        display: 'flex', justifyContent: 'center', alignItems: 'flex-start',
-        padding: '1.5rem',
-      }}>
+      <div
+        ref={viewRef}
+        style={{
+          flex: 1,
+          overflow: 'auto',
+          background: '#3b4340',
+          display: 'flex',
+          // 拡大して表示領域より広くなったら、中央寄せをやめて左端から見せる
+          justifyContent: zoom > 1 ? 'flex-start' : 'center',
+          alignItems: 'flex-start',
+          padding: '1rem',
+        }}
+      >
         {loadError ? (
-          <div style={{ color: '#fff', marginTop: '2rem' }}>⚠ {loadError}</div>
+          <p style={{ color: 'var(--on-ink)', marginTop: '2rem' }}>{loadError}</p>
         ) : (
           <Document
             file={url}
             onLoadSuccess={onLoadSuccess}
             onLoadError={onLoadError}
-            loading={
-              <div style={{ color: '#ccc', marginTop: '2rem', fontSize: '1rem' }}>⏳ 読み込み中...</div>
-            }
+            loading={<p style={{ color: 'var(--on-ink)', marginTop: '2rem' }}>読み込んでいます</p>}
           >
             <Page
               pageNumber={pageNumber}
-              renderTextLayer={true}
-              renderAnnotationLayer={true}
-              width={Math.min(typeof window !== 'undefined' ? window.innerWidth - 64 : 900, 900)}
+              renderTextLayer
+              renderAnnotationLayer
+              width={pageWidth}
             />
           </Document>
         )}
       </div>
-
-      {/* フッター（ページネーション補助） */}
-      {numPages > 1 && (
-        <div style={{
-          background: '#1a3a5c', padding: '0.5rem',
-          display: 'flex', justifyContent: 'center', gap: '0.5rem',
-          flexShrink: 0,
-        }}>
-          <button
-            onClick={() => setPageNumber(1)}
-            disabled={pageNumber <= 1}
-            style={footerBtn(pageNumber <= 1)}
-          >
-            ⟪ 最初
-          </button>
-          <button
-            onClick={() => setPageNumber(p => Math.max(p - 1, 1))}
-            disabled={pageNumber <= 1}
-            style={footerBtn(pageNumber <= 1)}
-          >
-            ← 前
-          </button>
-          <span style={{ color: '#fff', fontSize: '0.85rem', padding: '0.3rem 0.75rem', lineHeight: '1.8' }}>
-            {pageNumber} / {numPages} ページ
-          </span>
-          <button
-            onClick={() => setPageNumber(p => Math.min(p + 1, numPages))}
-            disabled={pageNumber >= numPages}
-            style={footerBtn(pageNumber >= numPages)}
-          >
-            次 →
-          </button>
-          <button
-            onClick={() => setPageNumber(numPages)}
-            disabled={pageNumber >= numPages}
-            style={footerBtn(pageNumber >= numPages)}
-          >
-            最後 ⟫
-          </button>
-        </div>
-      )}
     </div>
   )
-}
-
-function headerBtn(disabled: boolean): React.CSSProperties {
-  return {
-    padding: '0.35rem 0.75rem',
-    background: disabled ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.15)',
-    color: disabled ? 'rgba(255,255,255,0.35)' : '#fff',
-    border: '1px solid rgba(255,255,255,0.2)',
-    borderRadius: 6, fontSize: '0.8rem', fontWeight: 600,
-    cursor: disabled ? 'not-allowed' : 'pointer',
-  }
-}
-
-function footerBtn(disabled: boolean): React.CSSProperties {
-  return {
-    padding: '0.3rem 0.75rem',
-    background: disabled ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.15)',
-    color: disabled ? 'rgba(255,255,255,0.35)' : '#fff',
-    border: '1px solid rgba(255,255,255,0.2)',
-    borderRadius: 6, fontSize: '0.8rem', cursor: disabled ? 'not-allowed' : 'pointer',
-  }
 }
