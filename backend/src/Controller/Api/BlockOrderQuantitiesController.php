@@ -240,16 +240,8 @@ class BlockOrderQuantitiesController extends AppController
         try {
             $counts = $this->buildKamahoServiceFromRequest()->getMealCountsByRoomForDate($date);
         } catch (\Throwable $e) {
-            if ($this->hasKamahoCredentialHeaders()) {
-                try {
-                    $counts = (new KamahoApiService())->getMealCountsByRoomForDate($date);
-                } catch (\Throwable) {
-                    // kamaho が取れなくても継続（0扱い）
-                }
-            }
-            if (empty($counts)) {
-                Cache::write(self::KAMAHO_DOWN_KEY, true, 'kamaho');
-            }
+            // kamaho が取れなくても継続（0扱い）
+            Cache::write(self::KAMAHO_DOWN_KEY, true, 'kamaho');
         }
 
         // 失敗時（空配列）も書き込む。同じ失敗を短時間で繰り返し試さないため。
@@ -262,13 +254,5 @@ class BlockOrderQuantitiesController extends AppController
     {
         $options = $this->kamahoCredentialResolverService->resolveKamahoOptions($this->request);
         return new KamahoApiService($options);
-    }
-
-    private function hasKamahoCredentialHeaders(): bool
-    {
-        if ($this->request->getHeaderLine('X-Kamaho-Login-Account-B64') !== '' && $this->request->getHeaderLine('X-Kamaho-Login-Password-B64') !== '') {
-            return true;
-        }
-        return $this->request->getHeaderLine('X-Kamaho-Login-Account') !== '' && $this->request->getHeaderLine('X-Kamaho-Login-Password') !== '';
     }
 }
