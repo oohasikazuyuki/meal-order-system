@@ -21,6 +21,9 @@ import {
 } from '../_lib/api/client'
 import { getStoredUser } from '../_lib/auth'
 import { DOW, toDateStr, todayStr, getMondayOf, formatLong } from '../_lib/date'
+import ConfirmDialog from '../_components/ConfirmDialog'
+import { useModal } from '../_lib/useModal'
+import { getHoliday } from '../_lib/holiday'
 
 const MEAL_TYPES: MealType[] = [1, 2, 3, 4]
 const AI_PUBLIC_ENABLED = process.env.NEXT_PUBLIC_AI_PUBLIC_ENABLED === 'true'
@@ -77,6 +80,7 @@ export default function MenusPage() {
   const [copyIncludeBirthday, setCopyIncludeBirthday] = useState(true)
   const [copyOverwrite, setCopyOverwrite] = useState(false)
   const [weekDl, setWeekDl] = useState<Record<string, boolean>>({})
+  const [confirmMonthAi, setConfirmMonthAi] = useState(false)
 
   const [user, setUser] = useState(() => getStoredUser())
   useEffect(() => {
@@ -172,13 +176,12 @@ export default function MenusPage() {
   }
 
   const handleMonthAiAdd = async () => {
+    setConfirmMonthAi(false)
     if (monthAiRunning) return
     if (blocks.length === 0) {
       setNotice({ tone: 'error', text: '先にブロックを登録してください。' })
       return
     }
-    if (!confirm(`${year}年${month}月にAIの献立案を足します。すでに献立がある日はそのままです。続けますか？`))
-      return
 
     setMonthAiRunning(true)
     setNotice({ tone: 'plain', text: '準備しています' })
@@ -361,7 +364,7 @@ export default function MenusPage() {
             <button
               type="button"
               className="btn"
-              onClick={handleMonthAiAdd}
+              onClick={() => setConfirmMonthAi(true)}
               disabled={monthAiRunning}
             >
               {monthAiRunning ? 'AIが作成中' : 'AIで今月分を足す'}
@@ -404,6 +407,10 @@ export default function MenusPage() {
                 const dayMenus = day ? menusForDate(dateStr) : []
                 const badges = MEAL_TYPES.filter((mt) => dayMenus.some((m) => m.meal_type === mt))
                 const isToday = dateStr !== '' && dateStr === todayIso
+                const holiday = day ? getHoliday(dateStr) : null
+                // 祝日は日曜と同じ扱い（赤）。色だけに頼らず名前も出す
+                const isSun = di === 0 || holiday !== null
+                const isSat = di === 6 && !holiday
                 const isBirthday = day ? birthdayDates.has(dateStr) : false
 
                 if (!day) return <div key={di} className="calendar__cell calendar__cell--empty" />
@@ -413,10 +420,11 @@ export default function MenusPage() {
                     key={di}
                     type="button"
                     className="calendar__cell"
+                    data-off={isSun ? 'sun' : isSat ? 'sat' : undefined}
                     onClick={() => setModalDate(dateStr)}
-                    aria-label={`${month}月${day}日の献立を編集`}
+                    aria-label={`${month}月${day}日${holiday ? `（${holiday}）` : ''}の献立を編集`}
                   >
-                    <span className="calendar__num num" data-today={isToday || undefined} data-sun={di === 0 || undefined} data-sat={di === 6 || undefined}>
+                    <span className="calendar__num num" data-today={isToday || undefined} data-sun={isSun || undefined} data-sat={isSat || undefined}>
                       {day}
                     </span>
                     {isBirthday && (
@@ -424,6 +432,7 @@ export default function MenusPage() {
                         🎂
                       </span>
                     )}
+                    {holiday && <span className="calendar__holiday">{holiday}</span>}
                     <span className="calendar__badges">
                       {badges.map((mt) => (
                         <span key={mt} className="tag" data-meal={mt}>
@@ -470,6 +479,16 @@ export default function MenusPage() {
       <p className="muted" style={{ fontSize: 'var(--fs-sm)', margin: '0.5rem 0 0' }}>
         日付を押すと献立を編集できます。食札の数字は「献立を入れたブロック数 / 全ブロック数」です。
       </p>
+
+      {confirmMonthAi && (
+        <ConfirmDialog
+          title={`${year}年${month}月にAIの献立案を足します`}
+          message={`${daysInMonth}日分を1日ずつ順に処理します。すでに献立がある日はそのままです。件数によっては数分かかります。`}
+          confirmLabel="作成をはじめる"
+          onConfirm={handleMonthAiAdd}
+          onCancel={() => setConfirmMonthAi(false)}
+        />
+      )}
 
       {modalDate && (
         <MenuModal
@@ -545,6 +564,8 @@ function RoutineCopyModal({
   onClose,
   onSubmit,
 }: RoutineCopyModalProps) {
+  const cancelRef = useModal(onClose)
+
   return (
     <div className="backdrop" role="dialog" aria-modal="true" aria-label="別の月から献立をコピーする">
       <div className="modal" style={{ maxWidth: 460 }}>
@@ -622,7 +643,7 @@ function RoutineCopyModal({
         </div>
 
         <div className="modal__foot">
-          <button type="button" className="btn" onClick={onClose} disabled={running}>
+          <button type="button" className="btn" ref={cancelRef} onClick={onClose} disabled={running}>
             やめる
           </button>
           <button type="button" className="btn btn--primary" onClick={onSubmit} disabled={running}>
@@ -721,20 +742,7 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
   const [aiMessage, setAiMessage] = useState<string | null>(null)
   const [aiCustomNames, setAiCustomNames] = useState<Record<number, Partial<Record<MealType, string[]>>>>({})
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
-  useEffect(() => {
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.body.style.overflow = ''
-    }
-  }, [])
+  const closeRef = useModal(onClose)
 
   useEffect(() => {
     if (!aiSuggesting) return
@@ -959,7 +967,13 @@ function MenuModal({ date, menus, blocks, masters, isAdmin, userBlockId, onSaved
       <div className="modal" style={{ maxWidth: 620 }}>
         <div className="modal__head">
           <h2>{formatLong(date)}</h2>
-          <button type="button" className="btn btn--sm" onClick={onClose} style={{ marginLeft: 'auto' }}>
+          <button
+            type="button"
+            className="btn btn--sm"
+            ref={closeRef}
+            onClick={onClose}
+            style={{ marginLeft: 'auto' }}
+          >
             閉じる
           </button>
         </div>

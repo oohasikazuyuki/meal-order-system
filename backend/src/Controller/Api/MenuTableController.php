@@ -2,6 +2,7 @@
 namespace App\Controller\Api;
 
 use App\Controller\AppController;
+use App\Utility\JapaneseHoliday;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use ZipArchive;
 use DOMDocument;
@@ -341,7 +342,13 @@ class MenuTableController extends AppController
             if ($date !== '') {
                 $dt = new DateTime($date);
                 // テンプレートの直下の行に曜日（月）が入っているため、ここでは曜日を出さない
-                $setCell($dayCol[$i] . '8', (int)$dt->format('n') . '月' . (int)$dt->format('j') . '日');
+                $label   = (int)$dt->format('n') . '月' . (int)$dt->format('j') . '日';
+                $holiday = JapaneseHoliday::name($dt);
+                if ($holiday !== null) {
+                    // 子供用はZIPを直接書き換えていて塗りを足せないため、名前だけで示す
+                    $label .= ' ' . $holiday;
+                }
+                $setCell($dayCol[$i] . '8', $label);
             }
         }
 
@@ -631,15 +638,8 @@ class MenuTableController extends AppController
         $this->resetStaffRowHeights($sheet, $topMealRows);
         foreach ($topSection as $entry) {
             $dayIndex = $entry['dayOffset'];
-            $date     = $weekData[$dayIndex]['date']  ?? '';
             $meals    = $weekData[$dayIndex]['meals'] ?? [];
             $cg       = $colGroups[$entry['cgKey']];
-            if ($date !== '') {
-                $sheet->getCell($entry['dateCell'])->setValueExplicit(
-                    $this->formatJpDate(new DateTime($date)),
-                    \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING
-                );
-            }
             $this->clearStaffSection($sheet, $cg, $topMealRows);
             $this->fillStaffSection($sheet, $cg, $topMealRows, $meals, $weekStart);
         }
@@ -650,18 +650,16 @@ class MenuTableController extends AppController
         $this->resetStaffRowHeights($sheet, $bottomMealRows);
         foreach ($bottomSection as $entry) {
             $dayIndex = $entry['dayOffset'];
-            $date     = $weekData[$dayIndex]['date']  ?? '';
             $meals    = $weekData[$dayIndex]['meals'] ?? [];
             $cg       = $colGroups[$entry['cgKey']];
-            if ($date !== '') {
-                $sheet->getCell($entry['dateCell'])->setValueExplicit(
-                    $this->formatJpDate(new DateTime($date)),
-                    \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING
-                );
-            }
             $this->clearStaffSection($sheet, $cg, $bottomMealRows);
             $this->fillStaffSection($sheet, $cg, $bottomMealRows, $meals, $weekStart);
         }
+
+        // 日付行は clearStaffExtraAreas のあとに書く。
+        // 祝日名の欄（日付の隣の結合セル）はクリア対象なので、先に書くと消えてしまう。
+        $this->writeStaffDateRow($sheet, $weekData, $topSection, $colGroups);
+        $this->writeStaffDateRow($sheet, $weekData, $bottomSection, $colGroups);
 
         // メモエリアに発注先・発注日・納品日を書き込む
         $this->writeMemoSection($sheet, $weekStart);
@@ -1316,6 +1314,50 @@ class MenuTableController extends AppController
             $n = $n * 26 + (ord($col[$i]) - ord('A') + 1);
         }
         return $n;
+    }
+
+    /**
+     * 職員用の日付行。日付に加えて、土日・祝日が一目で分かるようにする。
+     *
+     * テンプレートは日付（A2:B2 など）とその隣（C2:F2 など）が別々の結合セルで、
+     * 元々この隣の欄に祝日名が手書きされていた。同じ置き方にそろえる。
+     * あわせて休みの日は両方の地を薄く染める。白黒で刷ることもあるので、
+     * 色だけに頼らず祝日名と曜日でも分かるようにしてある。
+     *
+     * @param array<int, array{dayOffset: int, cgKey: string, dateCell: string}> $section
+     * @param array<string, string[]> $colGroups
+     */
+    private function writeStaffDateRow($sheet, array $weekData, array $section, array $colGroups): void
+    {
+        $st = \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING;
+
+        foreach ($section as $entry) {
+            $date = $weekData[$entry['dayOffset']]['date'] ?? '';
+            if ($date === '') {
+                continue;
+            }
+            $dt       = new DateTime($date);
+            $holiday  = JapaneseHoliday::name($dt);
+            $row      = (int)preg_replace('/\D/', '', $entry['dateCell']);
+            $nameCell = $colGroups[$entry['cgKey']][2] . $row;
+
+            $sheet->getCell($entry['dateCell'])->setValueExplicit($this->formatJpDate($dt), $st);
+            $sheet->getCell($nameCell)->setValueExplicit($holiday ?? '', $st);
+
+            $dow = (int)$dt->format('w');
+            if ($dow === 0 || $holiday !== null) {
+                $bg = 'FFF7E2E7'; // 日曜・祝日
+            } elseif ($dow === 6) {
+                $bg = 'FFE6EBF7'; // 土曜
+            } else {
+                continue;
+            }
+            foreach ([$entry['dateCell'], $nameCell] as $ref) {
+                $sheet->getStyle($ref)->getFill()
+                    ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+                    ->getStartColor()->setARGB($bg);
+            }
+        }
     }
 
     private function formatJpDate(DateTime $dt): string

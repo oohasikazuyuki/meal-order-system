@@ -31,6 +31,15 @@
   --tag-3-bg: #ebedf7;
   --tag-4-bg: #faeaed;
 
+  /* 休みの日。土曜は青系、日曜と祝日は赤系。日付の文字色と同じ系統にそろえる */
+  --off-sat: #eef1f9;
+  --off-sat-hover: #e2e7f4;
+  --off-sun: #fbeff2;
+  --off-sun-hover: #f5e2e7;
+  /* 地が濃い見出し用。染めるのではなく墨そのものに色味を寄せる */
+  --ink-sat: #1c2440;
+  --ink-sun: #401c25;
+
   /* 状態 */
   --ok: #1f6f52;
   --ok-bg: #e7f2ec;
@@ -286,6 +295,9 @@ input[type='number'] {
 .weekstrip {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
+  /* 狭い画面では日付が7つ並びきらない。
+     ページ全体を横に伸ばさず、この帯の中だけで横スクロールさせる */
+  overflow-x: auto;
 }
 
 .weekstrip__day {
@@ -361,12 +373,31 @@ input[type='number'] {
   color: rgba(242, 245, 243, 0.8);
 }
 
-.weekstrip__day[data-sat='true'] .weekstrip__dow {
+/* 休みの日の色づけ。選択中の日は反転表示が優先されるので除外する
+   （でないと濃い背景を前提にした白文字が薄い地の上に乗って読めなくなる） */
+.weekstrip__day[data-sat='true']:not([aria-selected='true']) {
+  background: var(--off-sat);
+}
+
+.weekstrip__day[data-sat='true']:not([aria-selected='true']) .weekstrip__dow {
   color: var(--tag-3);
 }
 
-.weekstrip__day[data-sun='true'] .weekstrip__dow {
+.weekstrip__day[data-sun='true']:not([aria-selected='true']) {
+  background: var(--off-sun);
+}
+
+.weekstrip__day[data-sun='true']:not([aria-selected='true']) .weekstrip__dow {
   color: var(--tag-4);
+}
+
+/* 祝日名は曜日1文字より長い。帯の高さを崩さないよう詰める */
+.weekstrip__day[data-holiday] .weekstrip__dow {
+  letter-spacing: 0;
+  font-size: 0.68rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ==========================================================================
@@ -401,6 +432,9 @@ input[type='number'] {
 .calendar__dow[data-sun='true'] { color: var(--tag-4); }
 .calendar__dow[data-sat='true'] { color: var(--tag-3); }
 
+.calendar__dow[data-sun='true'] { background: var(--off-sun); }
+.calendar__dow[data-sat='true'] { background: var(--off-sat); }
+
 .calendar__row {
   border-bottom: 1px solid var(--rule-soft);
 }
@@ -428,8 +462,35 @@ input[type='number'] {
   border-left: 0;
 }
 
+/* 土日・祝日。数字の色だけだと一覧の中では気づきにくいので、
+   面そのものに色を敷いて週末の区切りを見えるようにする */
+.calendar__cell[data-off='sat'] {
+  background: var(--off-sat);
+}
+
+.calendar__cell[data-off='sun'] {
+  background: var(--off-sun);
+}
+
 .calendar__cell:hover {
   background: var(--paper-alt);
+}
+
+.calendar__cell[data-off='sat']:hover {
+  background: var(--off-sat-hover);
+}
+
+.calendar__cell[data-off='sun']:hover {
+  background: var(--off-sun-hover);
+}
+
+.calendar__holiday {
+  display: block;
+  margin-top: 0.1rem;
+  font-size: var(--fs-xs);
+  line-height: 1.25;
+  color: var(--tag-4);
+  font-weight: 700;
 }
 
 .calendar__cell--empty {
@@ -501,6 +562,11 @@ input[type='number'] {
   .calendar__cell,
   .calendar__cell--empty {
     min-height: 66px;
+  }
+
+  /* 日付を少し小さくして、7日ぶんが横スクロールなしで収まるようにする */
+  .weekstrip__num {
+    font-size: 1rem;
   }
 }
 
@@ -897,6 +963,41 @@ input[type='number'] {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 0 0.9rem;
+}
+
+/* 数値欄のスピナーは誤クリックのもとなので出さない。
+   増減はキーボードの上下キーでできる。 */
+.input--num::-webkit-outer-spin-button,
+.input--num::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+.input--num {
+  -moz-appearance: textfield;
+}
+
+/* ==========================================================================
+   読み込み中の骨組み
+   ========================================================================== */
+
+.skeleton {
+  background: linear-gradient(90deg, var(--rule-soft) 25%, var(--paper-alt) 50%, var(--rule-soft) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-sweep 1.4s ease-in-out infinite;
+  border-radius: 2px;
+}
+
+@keyframes skeleton-sweep {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+    background: var(--rule-soft);
+  }
 }
 
 /* ==========================================================================

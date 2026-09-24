@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import ConfirmDialog from '../_components/ConfirmDialog'
 import {
   fetchUsers,
   createUser,
@@ -22,6 +23,7 @@ export default function UsersPage() {
   const [showForm, setShowForm] = useState(false)
   const [editTarget, setEditTarget] = useState<UserRecord | null>(null)
   const [blocks, setBlocks] = useState<Block[]>([])
+  const [deleteTarget, setDeleteTarget] = useState<UserRecord | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -46,7 +48,7 @@ export default function UsersPage() {
   }, [])
 
   const handleDelete = async (user: UserRecord) => {
-    if (!confirm(`「${user.name}」を削除します。よろしいですか？`)) return
+    setDeleteTarget(null)
     const prevUsers = users
     setUsers((prev) => prev.filter((u) => u.id !== user.id))
     try {
@@ -74,6 +76,17 @@ export default function UsersPage() {
 
   return (
     <div>
+      {deleteTarget && (
+        <ConfirmDialog
+          title="利用者を削除します"
+          message={`「${deleteTarget.name}」（ログインID: ${deleteTarget.login_id}）を削除します。この利用者はログインできなくなります。`}
+          confirmLabel="削除する"
+          destructive
+          onConfirm={() => handleDelete(deleteTarget)}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+
       {error && (
         <p className="notice notice--error" role="alert">
           {error}
@@ -164,7 +177,7 @@ export default function UsersPage() {
                         <button
                           type="button"
                           className="btn btn--sm btn--danger"
-                          onClick={() => handleDelete(user)}
+                          onClick={() => setDeleteTarget(user)}
                         >
                           削除
                         </button>

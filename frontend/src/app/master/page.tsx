@@ -26,6 +26,7 @@ import {
   type SupplierInput,
 } from '../_lib/api/client'
 import { todayStr, DOW_MON_FIRST } from '../_lib/date'
+import ConfirmDialog from '../_components/ConfirmDialog'
 
 const getApiErrorMessage = (err: unknown, fallback: string): string => {
   const maybe = err as { response?: { data?: { message?: string } } }
@@ -83,6 +84,7 @@ function RoomsTab() {
   const [kamahoAccount, setKamahoAccount] = useState('')
   const [kamahoPassword, setKamahoPassword] = useState('')
   const [kamahoLoggingIn, setKamahoLoggingIn] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<Room | null>(null)
 
   const loadRooms = useCallback(async () => {
     setLoading(true)
@@ -189,7 +191,7 @@ function RoomsTab() {
   }
 
   const handleDelete = async (room: Room) => {
-    if (!confirm(`「${room.name}」を削除します。ブロックで使用中の場合は削除できません。`)) return
+    setDeleteTarget(null)
     const prevRooms = rooms
     setRooms((prev) => prev.filter((r) => r.id !== room.id))
     try {
@@ -203,6 +205,17 @@ function RoomsTab() {
 
   return (
     <>
+      {deleteTarget && (
+        <ConfirmDialog
+          title="部屋を削除します"
+          message={`「${deleteTarget.name}」を削除します。ブロックで使用中の部屋は削除できません。その場合は先にブロックの割り当てを外してください。`}
+          confirmLabel="削除する"
+          destructive
+          onConfirm={() => handleDelete(deleteTarget)}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+
       <section className="sheet">
         <div className="sheet__head sheet__head--quiet">
           <h2>食数管理システムとつなぐ</h2>
@@ -339,7 +352,7 @@ function RoomsTab() {
                           <button
                             type="button"
                             className="btn btn--sm btn--danger"
-                            onClick={() => handleDelete(room)}
+                            onClick={() => setDeleteTarget(room)}
                           >
                             削除
                           </button>
@@ -369,6 +382,7 @@ function BlocksTab() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Block | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -410,7 +424,7 @@ function BlocksTab() {
   }
 
   const handleDelete = async (block: Block) => {
-    if (!confirm(`「${block.name}」を削除します。よろしいですか？`)) return
+    setDeleteTarget(null)
     const prevBlocks = blocks
     setBlocks((prev) => prev.filter((b) => b.id !== block.id))
     try {
@@ -426,6 +440,17 @@ function BlocksTab() {
 
   return (
     <>
+      {deleteTarget && (
+        <ConfirmDialog
+          title="ブロックを削除します"
+          message={`「${deleteTarget.name}」を削除します。このブロックで入力した食数や献立の紐付けが参照できなくなります。`}
+          confirmLabel="削除する"
+          destructive
+          onConfirm={() => handleDelete(deleteTarget)}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+
       {error && (
         <p className="notice notice--error" role="alert">
           {error}
@@ -531,7 +556,7 @@ function BlocksTab() {
                         <button
                           type="button"
                           className="btn btn--sm btn--danger"
-                          onClick={() => handleDelete(block)}
+                          onClick={() => setDeleteTarget(block)}
                         >
                           削除
                         </button>
@@ -829,6 +854,8 @@ function SuppliersTab() {
   const [showForm, setShowForm] = useState(false)
   const [templateUploading, setTemplateUploading] = useState(false)
   const [templateMsg, setTemplateMsg] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Supplier | null>(null)
+  const [confirmTemplateReset, setConfirmTemplateReset] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -902,7 +929,7 @@ function SuppliersTab() {
   }
 
   const handleDelete = async (s: Supplier) => {
-    if (!confirm(`「${s.name}」を削除します。よろしいですか？`)) return
+    setDeleteTarget(null)
     const prevSuppliers = suppliers
     setSuppliers((prev) => prev.filter((x) => x.id !== s.id))
     try {
@@ -935,8 +962,8 @@ function SuppliersTab() {
   }
 
   const handleTemplateDelete = async () => {
+    setConfirmTemplateReset(false)
     if (!editingId) return
-    if (!confirm('登録したひな形を削除して、標準のひな形に戻します。よろしいですか？')) return
     try {
       await deleteSupplierTemplate(editingId)
       setTemplateMsg('標準のひな形に戻しました')
@@ -969,6 +996,27 @@ function SuppliersTab() {
 
   return (
     <>
+      {deleteTarget && (
+        <ConfirmDialog
+          title="仕入先を削除します"
+          message={`「${deleteTarget.name}」を削除します。この仕入先を指定している材料は、発注先が未設定になります。`}
+          confirmLabel="削除する"
+          destructive
+          onConfirm={() => handleDelete(deleteTarget)}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+      {confirmTemplateReset && (
+        <ConfirmDialog
+          title="ひな形を標準に戻します"
+          message="登録したひな形を削除して、標準のひな形に戻します。アップロードしたファイルは元に戻せません。"
+          confirmLabel="標準に戻す"
+          destructive
+          onConfirm={handleTemplateDelete}
+          onCancel={() => setConfirmTemplateReset(false)}
+        />
+      )}
+
       {successMsg && <p className="notice notice--ok">{successMsg}</p>}
       {!showForm && error && (
         <p className="notice notice--error" role="alert">
@@ -1128,7 +1176,7 @@ function SuppliersTab() {
                     今のひな形を保存する
                   </button>
                   {editingSupplier?.has_custom_template && (
-                    <button type="button" className="btn btn--danger" onClick={handleTemplateDelete}>
+                    <button type="button" className="btn btn--danger" onClick={() => setConfirmTemplateReset(true)}>
                       標準のひな形に戻す
                     </button>
                   )}
@@ -1239,7 +1287,7 @@ function SuppliersTab() {
                         <button
                           type="button"
                           className="btn btn--sm btn--danger"
-                          onClick={() => handleDelete(s)}
+                          onClick={() => setDeleteTarget(s)}
                         >
                           削除
                         </button>

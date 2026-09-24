@@ -11,6 +11,7 @@ import {
   MEAL_TYPE_LABELS,
 } from '../_lib/api/client'
 import { getMondayOf, addWeeks, formatShort, DOW_MON_FIRST } from '../_lib/date'
+import { getHoliday } from '../_lib/holiday'
 import WeekBar from '../_components/WeekBar'
 
 const PdfViewerModal = dynamic(() => import('../_components/PdfViewerModal'), { ssr: false })
@@ -216,6 +217,7 @@ function DayColumn({
   const dateStr = dayData?.date ?? ''
   const meals = dayData?.meals ?? {}
   const hasMeals = Object.values(meals).some((m) => m && m.length > 0)
+  const holiday = dateStr ? getHoliday(dateStr) : null
 
   return (
     <div
@@ -230,7 +232,8 @@ function DayColumn({
         style={{
           margin: 0,
           padding: '0.4rem 0.6rem',
-          background: 'var(--ink)',
+          // 見出しは地が濃いので、休みの日は薄く染めるのではなく地の色を変える
+          background: holiday || dayIndex === 6 ? 'var(--ink-sun)' : dayIndex === 5 ? 'var(--ink-sat)' : 'var(--ink)',
           color: 'var(--on-ink)',
           textAlign: 'center',
           fontWeight: 700,
@@ -238,6 +241,9 @@ function DayColumn({
         }}
       >
         {DOW_MON_FIRST[dayIndex]}
+        {holiday && (
+          <span style={{ marginLeft: '0.4rem', fontSize: 'var(--fs-sm)' }}>{holiday}</span>
+        )}
         {dateStr && (
           <span
             className="num"
