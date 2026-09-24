@@ -26,7 +26,7 @@ class SeedSupplierAndCoopDefaults extends AbstractMigration
         $now = date('Y-m-d H:i:s');
 
         // 魚屋: 火曜発注 -> 翌週の水・金納品
-        $exists = $this->table('suppliers')->select(['id'])->where(['name' => '魚屋'])->execute()->fetch();
+        $exists = $this->fetchRow("SELECT id FROM suppliers WHERE name = '魚屋' LIMIT 1");
         if (!$exists) {
             $suppliers->insert([
                 'name' => '魚屋',
@@ -43,7 +43,7 @@ class SeedSupplierAndCoopDefaults extends AbstractMigration
         }
 
         // 肉屋: 火曜発注 -> 今週金 + 翌週月火木納品（パイプ形式）
-        $exists = $this->table('suppliers')->select(['id'])->where(['name' => '肉屋'])->execute()->fetch();
+        $exists = $this->fetchRow("SELECT id FROM suppliers WHERE name = '肉屋' LIMIT 1");
         if (!$exists) {
             $suppliers->insert([
                 'name' => '肉屋',
@@ -60,7 +60,7 @@ class SeedSupplierAndCoopDefaults extends AbstractMigration
         }
 
         // 八百屋: 火曜発注 -> 今週金土 + 翌週月火木納品（パイプ形式）
-        $exists = $this->table('suppliers')->select(['id'])->where(['name' => '八百屋'])->execute()->fetch();
+        $exists = $this->fetchRow("SELECT id FROM suppliers WHERE name = '八百屋' LIMIT 1");
         if (!$exists) {
             $suppliers->insert([
                 'name' => '八百屋',
@@ -77,7 +77,7 @@ class SeedSupplierAndCoopDefaults extends AbstractMigration
         }
 
         // 生協: 発注書と非連動
-        $exists = $this->table('suppliers')->select(['id'])->where(['name' => '生協'])->execute()->fetch();
+        $exists = $this->fetchRow("SELECT id FROM suppliers WHERE name = '生協' LIMIT 1");
         if (!$exists) {
             $suppliers->insert([
                 'name' => '生協',
@@ -94,7 +94,7 @@ class SeedSupplierAndCoopDefaults extends AbstractMigration
         }
 
         // 在庫業者（既存ロジックで code='Z' を使用）
-        $exists = $this->table('suppliers')->select(['id'])->where(['code' => 'Z'])->execute()->fetch();
+        $exists = $this->fetchRow("SELECT id FROM suppliers WHERE code = 'Z' LIMIT 1");
         if (!$exists) {
             $suppliers->insert([
                 'name' => '在庫',
@@ -121,7 +121,7 @@ class SeedSupplierAndCoopDefaults extends AbstractMigration
         $now = date('Y-m-d H:i:s');
 
         // 週次発注（余剰を見込んで一括発注）
-        $exists = $this->table('coop_items')->select(['id'])->where(['name' => '卵'])->execute()->fetch();
+        $exists = $this->fetchRow("SELECT id FROM coop_items WHERE name = '卵' LIMIT 1");
         if (!$exists) {
             $coopItems->insert([
                 'name' => '卵',
@@ -133,7 +133,7 @@ class SeedSupplierAndCoopDefaults extends AbstractMigration
             ])->save();
         }
 
-        if (!$this->table('coop_items')->select(['id'])->where(['name' => '牛乳'])->execute()->fetch()) {
+        if (!$this->fetchRow("SELECT id FROM coop_items WHERE name = '牛乳' LIMIT 1")) {
             $coopItems->insert([
                 'name' => '牛乳',
                 'unit' => '本',
@@ -145,7 +145,7 @@ class SeedSupplierAndCoopDefaults extends AbstractMigration
         }
 
         // 日別個数指定
-        if (!$this->table('coop_items')->select(['id'])->where(['name' => '冷凍チャーハン'])->execute()->fetch()) {
+        if (!$this->fetchRow("SELECT id FROM coop_items WHERE name = '冷凍チャーハン' LIMIT 1")) {
             $coopItems->insert([
                 'name' => '冷凍チャーハン',
                 'unit' => '袋',

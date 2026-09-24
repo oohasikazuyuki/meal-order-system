@@ -106,7 +106,16 @@ class RepairSchemaForCurrentApi extends AbstractMigration
         ");
         $this->execute("ALTER TABLE menus MODIFY meal_type INT NOT NULL");
         $this->execute("ALTER TABLE menus MODIFY menu_date DATE NOT NULL");
-        $this->execute("ALTER TABLE menus ADD INDEX idx_menus_menu_date_meal_block (menu_date, meal_type, block_id)");
+        $hasIndex = $this->fetchRow("
+            SELECT 1 FROM information_schema.statistics
+            WHERE table_schema = DATABASE()
+              AND table_name = 'menus'
+              AND index_name = 'idx_menus_menu_date_meal_block'
+            LIMIT 1
+        ");
+        if (!$hasIndex) {
+            $this->execute("ALTER TABLE menus ADD INDEX idx_menus_menu_date_meal_block (menu_date, meal_type, block_id)");
+        }
     }
 
     private function ensureRoomsAndBlocks(): void
@@ -256,23 +265,22 @@ class RepairSchemaForCurrentApi extends AbstractMigration
                 ->create();
         }
 
-        if (!$this->hasTable('coop_orders')) {
-            $this->table('coop_orders')
-                ->addColumn('week_start', 'date', ['null' => false])
-                ->addColumn('item_id', 'integer', ['null' => false])
-                ->addColumn('order_date', 'date', ['null' => true, 'default' => null])
-                ->addColumn('order_date_norm', 'date', [
-                    'null' => false,
-                    'update' => 'GENERATED ALWAYS AS (COALESCE(order_date, \'1000-01-01\')) STORED'
-                ])
-                ->addColumn('quantity', 'integer', ['null' => false, 'default' => 0])
-                ->addColumn('notes', 'string', ['limit' => 255, 'null' => true, 'default' => null])
-                ->addColumn('created', 'datetime', ['null' => true])
-                ->addColumn('modified', 'datetime', ['null' => true])
-                ->addIndex(['week_start', 'item_id', 'order_date_norm'], ['unique' => true, 'name' => 'uniq_week_item_date'])
-                ->addIndex(['week_start'], ['name' => 'idx_coop_orders_week_start'])
-                ->addIndex(['item_id'], ['name' => 'idx_coop_orders_item_id'])
-                ->create();
-        }
+        // order_date_norm は生成列のため素の SQL で作成する
+        $this->execute("
+            CREATE TABLE IF NOT EXISTS coop_orders (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                week_start DATE NOT NULL,
+                item_id INT NOT NULL,
+                order_date DATE NULL DEFAULT NULL,
+                order_date_norm DATE GENERATED ALWAYS AS (COALESCE(order_date, '1000-01-01')) STORED,
+                quantity INT NOT NULL DEFAULT 0,
+                notes VARCHAR(255) NULL DEFAULT NULL,
+                created DATETIME NULL,
+                modified DATETIME NULL,
+                UNIQUE KEY uniq_week_item_date (week_start, item_id, order_date_norm),
+                KEY idx_coop_orders_week_start (week_start),
+                KEY idx_coop_orders_item_id (item_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
     }
 }

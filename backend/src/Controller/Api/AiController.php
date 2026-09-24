@@ -130,6 +130,178 @@ class AiController extends AppController
     }
 
     /**
+     * POST /api/ai/menu-master-bulk
+     * body: { block_id?: number, include_ingredients?: boolean }
+     *
+     * 1食分（主食・主菜・副菜・汁物、または丼物セット）をまとめて下書きする。
+     * 1品ずつ menu-master-draft を叩くより、献立としてまとまった組み合わせになる。
+     */
+    public function menuMasterBulk(): void
+    {
+        if (!$this->ensureAiPublicEnabled()) {
+            return;
+        }
+        $blockId = $this->request->getData('block_id');
+        $blockId = ($blockId !== null && $blockId !== '') ? (int)$blockId : null;
+        $includeIngredients = $this->request->getData('include_ingredients') !== false;
+        $candidateNames = $this->candidateItemsToNames($this->fetchCandidateMenuNames($blockId));
+
+        if ($includeIngredients) {
+            $suppliers = $this->Suppliers->find()
+                ->select(['id', 'name', 'code', 'notes'])
+                ->orderBy(['id' => 'ASC'])
+                ->toArray();
+            [$dishes, $rawText] = $this->generateMealSetWithOllama($candidateNames, $suppliers);
+        } else {
+            [$dishes, $rawText] = $this->generateMealSetNamesWithOllama($candidateNames);
+        }
+
+        if ($dishes === null) {
+            $this->respondError(
+                502,
+                ErrorCode::AI_PARSE,
+                'AI一括生成に失敗しました。しばらくしてから再実行してください。',
+                ['raw' => $rawText ?: '']
+            );
+            return;
+        }
+
+        $this->set(['ok' => true, 'dishes' => $dishes, 'raw' => $rawText]);
+        $this->viewBuilder()->setOption('serialize', ['ok', 'dishes', 'raw']);
+    }
+
+    /**
+     * 料理名だけを1食分生成する（材料なし）。
+     *
+     * @return array [dishes|null, rawText]
+     */
+    private function generateMealSetNamesWithOllama(array $candidates): array
+    {
+        $prompt = implode("\n", [
+            "保育施設の給食メニューを1食分生成してください。",
+            "【通常】主食・主菜・副菜・汁物 の4品。【丼物】丼物1品＋副菜・汁物（任意）。",
+            "料理名は実在する日本の料理名にしてください。",
+            "参考（重複を避ける）: " . (empty($candidates) ? 'なし' : implode('、', array_slice($candidates, 0, 15))),
+            'JSONのみ。形式: {"dishes":[{"name":"料理名","dish_category":"主食"},...]}',
+            "dish_categoryは 主食/主菜/副菜/汁物/丼物/デザート のいずれか。",
+        ]);
+
+        $res = $this->callOllama($prompt, 60, ['max_tokens' => 400, 'temperature' => 0.7]);
+        if (!$res['ok']) {
+            return [null, ''];
+        }
+
+        $rawText = trim((string)($res['text'] ?? ''));
+        $parsed = json_decode($rawText, true);
+        if (!is_array($parsed)) {
+            $parsed = $this->extractJsonObject($rawText);
+        }
+        if (!is_array($parsed) || empty($parsed['dishes'])) {
+            error_log('generateMealSetNames parse failed: ' . mb_substr($rawText, 0, 240));
+            return [null, $rawText];
+        }
+
+        $dishes = [];
+        foreach ((array)$parsed['dishes'] as $dish) {
+            if (!is_array($dish)) {
+                continue;
+            }
+            $name = trim((string)($dish['name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+            $category = trim((string)($dish['dish_category'] ?? ''));
+            $dishes[] = [
+                'name'             => $name,
+                'dish_category'    => $category !== '' ? $category : null,
+                'grams_per_person' => 0,
+                'memo'             => '',
+                'ingredients'      => [],
+            ];
+        }
+
+        return empty($dishes) ? [null, $rawText] : [$dishes, $rawText];
+    }
+
+    /**
+     * 材料まで含めて1食分生成する。
+     *
+     * @return array [dishes|null, rawText]
+     */
+    private function generateMealSetWithOllama(array $candidates, array $suppliers): array
+    {
+        $supplierLines = [];
+        foreach ($suppliers as $s) {
+            $line  = '・' . (string)$s->name;
+            $notes = trim((string)($s->notes ?? ''));
+            if ($notes !== '') {
+                $line .= '（' . $notes . '）';
+            }
+            $supplierLines[] = $line;
+        }
+        $supplierInfo = empty($supplierLines) ? 'なし' : implode("\n", $supplierLines);
+
+        $prompt = implode("\n", [
+            "保育施設の給食メニューセットを1食分生成してください。",
+            "",
+            "【通常セット】主食・主菜・副菜・汁物 の4品を生成する。",
+            "【丼物セット】丼物1品（主食と主菜を兼ねる）＋ 副菜（任意）＋ 汁物（任意）を生成する。",
+            "",
+            "どちらかを選んで生成してください。全ての料理名は実在する日本の料理名にしてください。",
+            "",
+            "既存メニュー（重複を避けること）:",
+            (empty($candidates) ? 'なし' : implode('、', array_slice($candidates, 0, 20))),
+            "",
+            "仕入先一覧:",
+            $supplierInfo,
+            "",
+            "出力はJSONのみ。形式:",
+            '{"meal_type":"normal","dishes":[{"name":"料理名","dish_category":"主食","grams_per_person":100,"memo":"","ingredients":[{"name":"材料名","amount":50,"unit":"g","supplier_name":"","persons_per_unit":null}]}]}',
+            "dish_categoryは 主食/主菜/副菜/汁物/丼物/デザート から選ぶ。",
+            "supplier_nameは仕入先一覧から品目が一致する場合のみ設定。不明な場合は\"\"。",
+            "ingredientsは各料理3〜5件。unitは g,kg,ml,L,個,枚,本,袋,缶,束,合,大さじ,小さじ,切れ,適量 のいずれか。",
+        ]);
+
+        $res = $this->callOllama($prompt, 150, ['max_tokens' => 3000, 'temperature' => 0.7]);
+        if (!$res['ok']) {
+            return [null, ''];
+        }
+
+        $rawText = trim((string)($res['text'] ?? ''));
+        $parsed = json_decode($rawText, true);
+        if (!is_array($parsed)) {
+            $parsed = $this->extractJsonObject($rawText);
+        }
+        if (!is_array($parsed) || empty($parsed['dishes'])) {
+            error_log('menuMasterBulk parse failed: ' . mb_substr($rawText, 0, 240));
+            return [null, $rawText];
+        }
+
+        $dishes = [];
+        foreach ((array)$parsed['dishes'] as $dish) {
+            if (!is_array($dish)) {
+                continue;
+            }
+            $dishName = trim((string)($dish['name'] ?? ''));
+            if ($dishName === '') {
+                continue;
+            }
+
+            $normalized   = $this->normalizeMenuMasterDraft($dish, $suppliers);
+            $dishCategory = trim((string)($dish['dish_category'] ?? ''));
+            $dishes[] = [
+                'name'             => $dishName,
+                'dish_category'    => $dishCategory !== '' ? $dishCategory : null,
+                'grams_per_person' => $normalized['grams_per_person'],
+                'memo'             => $normalized['memo'],
+                'ingredients'      => $normalized['ingredients'],
+            ];
+        }
+
+        return empty($dishes) ? [null, $rawText] : [$dishes, $rawText];
+    }
+
+    /**
      * メニューマスタから候補アイテムリストを取得する。
      * 各アイテムは ['name' => string, 'dish_category' => string|null] の形式。
      */

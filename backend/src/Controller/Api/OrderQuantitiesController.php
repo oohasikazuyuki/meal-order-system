@@ -24,6 +24,11 @@ class OrderQuantitiesController extends AppController
      */
     public function index(): void
     {
+        $user = $this->requireAuthenticatedUser();
+        if ($user === null) {
+            return;
+        }
+
         $date = $this->request->getQuery('date', date('Y-m-d'));
 
         $rows = $this->DailyOrderQuantities->find('all')
@@ -31,8 +36,8 @@ class OrderQuantitiesController extends AppController
             ->orderBy(['meal_type' => 'ASC'])
             ->toArray();
 
-        $this->set(['ok' => true, 'date' => $date, 'quantities' => $rows]);
-        $this->viewBuilder()->setOption('serialize', ['ok', 'date', 'quantities']);
+        $this->set(['ok' => true, 'date' => $date, 'user' => $user, 'quantities' => $rows]);
+        $this->viewBuilder()->setOption('serialize', ['ok', 'date', 'user', 'quantities']);
     }
 
     /**

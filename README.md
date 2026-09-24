@@ -47,23 +47,25 @@ docker compose --env-file .env.instance2 -p meal2 up -d --build
 - `-p` を変えることで、ネットワーク/ボリューム名も分離されます。
 - `NEXT_PUBLIC_API_URL` は `WEB_PORT` に連動して `http://localhost:${WEB_PORT}/api` が使われます。
 
-## ローカルLLM（Ollama）連携
+## AI メニュー提案 API
 
-このプロジェクトは `ollama` コンテナを同梱しています。  
-初回はモデルを1回だけ pull してください。
+OpenRouter（既定モデル: `openai/gpt-oss-20b:free`）を使い、献立提案とメニューマスタ下書きを生成します。
 
-```bash
-docker compose up -d ollama
-docker compose exec ollama ollama pull llama3.2:1b
-```
-
-モデルを変更したい場合は `.env` の `OLLAMA_MODEL` を変更します。
-
+`.env` の設定例:
 ```env
-OLLAMA_MODEL=llama3.2:1b
+AI_PUBLIC_ENABLED=true
+NEXT_PUBLIC_AI_PUBLIC_ENABLED=true
+AI_PROVIDER=openrouter
+OPENROUTER_MODEL=openai/gpt-oss-20b:free
+OPENROUTER_API_KEY=sk-or-...
 ```
 
 バックエンド API:
 - `POST /api/ai/menu-suggest`
   - 入力: `date`, `block_id`, `existing_by_meal`
-  - 出力: 食事種別ごとの提案メニュー名（既存 `menu_masters` から選択）
+  - 出力: 食事種別ごとの新規献立名（メニューマスタ未登録でも可）
+- `POST /api/ai/menu-master-draft`
+  - 入力: `name`, `block_id`
+  - 出力: 食材・分量などの下書き
+
+LLM プロバイダは `.env` の `AI_PROVIDER`（`openrouter` / `groq`）で切り替えます。

@@ -6,17 +6,36 @@ import Link from 'next/link'
 import { getStoredUser, clearAuth, isLoggedIn } from '../_lib/auth'
 import { logout, type AuthUser } from '../_lib/api/client'
 
-const navItems = [
-  { href: '/', label: 'ダッシュボード', icon: '⊞' },
-  { href: '/daily-order', label: '食数発注', icon: '📋' },
-  { href: '/menus', label: '献立管理', icon: '📅' },
-  { href: '/menu-master', label: 'メニュー管理', icon: '🍽' },
-  { href: '/order-sheets', label: '発注書出力', icon: '📄' },
-  { href: '/coop-order',   label: '生協発注',   icon: '🛒' },
-  { href: '/menu-table',   label: '献立表出力', icon: '📋' },
-  { href: '/master', label: 'マスタ管理', icon: '⚙' },
-  { href: '/users', label: 'ユーザー管理', icon: '👤' },
+type NavItem = { href: string; label: string }
+
+const navGroups: { group: string; items: NavItem[] }[] = [
+  {
+    group: '毎日の作業',
+    items: [
+      { href: '/', label: '今日の状況' },
+      { href: '/daily-order', label: '食数を入力' },
+      { href: '/menus', label: '献立を組む' },
+    ],
+  },
+  {
+    group: '紙に出す',
+    items: [
+      { href: '/order-sheets', label: '発注書' },
+      { href: '/coop-order', label: '生協発注' },
+      { href: '/menu-table', label: '献立表' },
+    ],
+  },
+  {
+    group: '登録内容',
+    items: [
+      { href: '/menu-master', label: 'メニューと材料' },
+      { href: '/master', label: '部屋・ブロック・仕入先' },
+      { href: '/users', label: '利用者' },
+    ],
+  },
 ]
+
+const allItems = navGroups.flatMap((g) => g.items)
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
@@ -25,7 +44,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const isNoShellPath = pathname !== null && noShellPaths.includes(pathname)
   const [user, setUser] = useState<AuthUser | null>(null)
   const [checking, setChecking] = useState(true)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [today, setToday] = useState('')
+
+  useEffect(() => {
+    setToday(
+      new Date().toLocaleDateString('ja-JP', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        weekday: 'short',
+      })
+    )
+  }, [])
 
   useEffect(() => {
     if (isNoShellPath) {
@@ -33,6 +63,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return
     }
     if (!isLoggedIn()) {
+      setChecking(false)
       router.replace('/login')
       return
     }
@@ -41,179 +72,82 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [isNoShellPath, pathname, router])
 
   const handleLogout = async () => {
-    try { await logout() } catch { /* ignore */ }
+    try {
+      await logout()
+    } catch {
+      /* セッションは端末側で必ず破棄する */
+    }
     clearAuth()
     router.push('/login')
   }
 
-  // ログインページはシェルなし
-  if (isNoShellPath) {
-    return <>{children}</>
-  }
+  const roleLabel = user?.role === 'admin' ? '管理者' : '一般'
+
+  if (isNoShellPath) return <>{children}</>
 
   if (checking) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <p style={{ color: '#666' }}>読み込み中...</p>
+      <div className="empty" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
+        読み込んでいます
       </div>
     )
   }
 
   return (
-    <div className="app-layout" style={{ display: 'flex', minHeight: '100vh' }}>
-      {/* サイドバー */}
-      <aside className="app-sidebar" style={{
-        width: 240,
-        background: 'linear-gradient(180deg, #1a3a5c 0%, #0d2137 100%)',
-        display: 'flex',
-        flexDirection: 'column',
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        bottom: 0,
-        zIndex: 100,
-        boxShadow: '2px 0 8px rgba(0,0,0,0.15)',
-        transform: sidebarOpen ? 'translateX(0)' : undefined,
-      }}>
-        {/* ロゴエリア */}
-        <div style={{
-          padding: '1.5rem 1.25rem',
-          borderBottom: '1px solid rgba(255,255,255,0.1)',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <div style={{
-              width: 36,
-              height: 36,
-              background: 'rgba(255,255,255,0.15)',
-              borderRadius: 8,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '1.2rem',
-            }}>📋</div>
-            <div>
-              <div style={{ color: '#fff', fontWeight: 700, fontSize: '0.95rem', lineHeight: 1.2 }}>食数発注</div>
-              <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.7rem' }}>管理システム</div>
-            </div>
-          </div>
+    <div className="app">
+      <nav className="rail" aria-label="メインメニュー">
+        <div className="rail__mark">
+          <strong>食数発注</strong>
         </div>
 
-        {/* ナビゲーション */}
-        <nav style={{ flex: 1, padding: '0.75rem 0.75rem' }}>
-          {navItems.map(({ href, label, icon }) => {
-            const active = pathname === href
-            return (
-              <Link
-                key={href}
-                href={href}
+        <div className="rail__nav">
+          {navGroups.map(({ group, items }) => (
+            <div key={group} style={{ marginBottom: '0.6rem' }}>
+              <p
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.75rem',
-                  padding: '0.7rem 0.75rem',
-                  borderRadius: 8,
-                  marginBottom: '0.25rem',
-                  background: active ? 'rgba(255,255,255,0.15)' : 'transparent',
-                  color: active ? '#fff' : 'rgba(255,255,255,0.65)',
-                  textDecoration: 'none',
-                  fontWeight: active ? 600 : 400,
-                  fontSize: '0.9rem',
-                  transition: 'all 0.15s',
-                  borderLeft: active ? '3px solid #4fc3f7' : '3px solid transparent',
+                  margin: '0.5rem 0 0.15rem',
+                  padding: '0 1.1rem',
+                  fontSize: 'var(--fs-xs)',
+                  color: 'rgba(242,245,243,0.42)',
+                  letterSpacing: '0.1em',
                 }}
               >
-                <span style={{ fontSize: '1rem', minWidth: 20, textAlign: 'center' }}>{icon}</span>
-                {label}
-              </Link>
-            )
-          })}
-        </nav>
+                {group}
+              </p>
+              {items.map(({ href, label }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  className="rail__link"
+                  aria-current={pathname === href ? 'page' : undefined}
+                >
+                  {label}
+                </Link>
+              ))}
+            </div>
+          ))}
+        </div>
 
-        {/* ユーザー情報 */}
-        <div style={{
-          padding: '1rem 1.25rem',
-          borderTop: '1px solid rgba(255,255,255,0.1)',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.75rem' }}>
-            <div style={{
-              width: 32,
-              height: 32,
-              background: 'rgba(255,255,255,0.15)',
-              borderRadius: '50%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '0.85rem',
-              color: '#fff',
-              fontWeight: 700,
-            }}>
-              {user?.name?.charAt(0) ?? '?'}
-            </div>
-            <div>
-              <div style={{ color: '#fff', fontSize: '0.85rem', fontWeight: 600 }}>{user?.name}</div>
-              <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.7rem' }}>
-                {user?.role === 'admin' ? '管理者' : 'ユーザー'}
-              </div>
-            </div>
+        <div className="rail__foot">
+          <div className="rail__who">
+            {user?.name ?? '—'}
+            {user?.name !== roleLabel && <span>{roleLabel}</span>}
           </div>
-          <button
-            onClick={handleLogout}
-            style={{
-              width: '100%',
-              padding: '0.5rem',
-              background: 'rgba(255,255,255,0.08)',
-              color: 'rgba(255,255,255,0.7)',
-              border: '1px solid rgba(255,255,255,0.15)',
-              borderRadius: 6,
-              cursor: 'pointer',
-              fontSize: '0.85rem',
-            }}
-          >
+          <button type="button" className="rail__out" onClick={handleLogout}>
             ログアウト
           </button>
         </div>
-      </aside>
+      </nav>
 
-      {/* メインコンテンツ */}
-      <div className="app-main-wrapper" style={{ flex: 1, marginLeft: 240, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-        {/* ヘッダー */}
-        <header className="app-header" style={{
-          background: '#fff',
-          borderBottom: '1px solid #e2e8f0',
-          padding: '0 2rem',
-          height: 60,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          position: 'sticky',
-          top: 0,
-          zIndex: 50,
-          boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-        }}>
-          <h1 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: '#374151' }}>
-            {navItems.find((n) => n.href === pathname)?.label ?? 'ページ'}
-          </h1>
-          <div style={{ color: '#6b7280', fontSize: '0.85rem' }}>
-            {new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })}
-          </div>
+      <div className="shell">
+        <header className="topbar">
+          <h1>{allItems.find((n) => n.href === pathname)?.label ?? '食数発注システム'}</h1>
+          <p className="topbar__date">{today}</p>
         </header>
 
-        {/* ページコンテンツ */}
-        <main className="app-main" style={{ flex: 1, padding: '2rem' }}>
-          {children}
-        </main>
+        <main className="page">{children}</main>
 
-        {/* フッター */}
-        <footer className="app-footer" style={{
-          background: '#fff',
-          borderTop: '1px solid #e2e8f0',
-          padding: '0.75rem 2rem',
-          textAlign: 'center',
-          color: '#9ca3af',
-          fontSize: '0.8rem',
-        }}>
-          食数発注システム © {new Date().getFullYear()}
-        </footer>
+        <footer className="appfoot">食数発注システム</footer>
       </div>
     </div>
   )

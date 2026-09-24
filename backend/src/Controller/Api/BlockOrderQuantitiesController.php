@@ -2,7 +2,9 @@
 namespace App\Controller\Api;
 
 use App\Controller\AppController;
+use Cake\Cache\Cache;
 use App\Service\KamahoApiService;
+use App\Service\KamahoCredentialResolverService;
 
 /**
  * ブロック別発注数量 API
@@ -15,12 +17,18 @@ use App\Service\KamahoApiService;
  */
 class BlockOrderQuantitiesController extends AppController
 {
+    /** 連携先に接続できなかったことを一時的に覚えておくキー */
+    private const KAMAHO_DOWN_KEY = 'kamaho_unavailable';
+
+    private KamahoCredentialResolverService $kamahoCredentialResolverService;
+
     public function initialize(): void
     {
         parent::initialize();
         $this->Blocks = $this->fetchTable('Blocks');
         $this->BlockOrderQuantities = $this->fetchTable('BlockOrderQuantities');
         $this->Menus = $this->fetchTable('Menus');
+        $this->kamahoCredentialResolverService = new KamahoCredentialResolverService();
     }
 
     /**
@@ -28,6 +36,11 @@ class BlockOrderQuantitiesController extends AppController
      */
     public function index(): void
     {
+        $user = $this->requireAuthenticatedUser();
+        if ($user === null) {
+            return;
+        }
+
         $date = $this->request->getQuery('date', date('Y-m-d'));
 
         // 1. ブロック+部屋+グラム設定
@@ -36,16 +49,7 @@ class BlockOrderQuantitiesController extends AppController
             ->orderBy(['Blocks.sort_order' => 'ASC', 'Blocks.id' => 'ASC'])
             ->toArray();
 
-        // 2. kamahoから部屋別食数取得
-        $kamahoByRoom = [];
-        try {
-            $service      = new KamahoApiService();
-            $kamahoByRoom = $service->getMealCountsByRoomForDate($date);
-        } catch (\Throwable $e) {
-            // kamaho が取れなくても継続（0扱い）
-        }
-
-        // 3. 保存済みのblock_order_quantities
+        // 2. 保存済みのblock_order_quantities
         $savedRows   = $this->BlockOrderQuantities->find()
             ->where(['order_date' => $date])
             ->toArray();
@@ -53,6 +57,13 @@ class BlockOrderQuantitiesController extends AppController
         foreach ($savedRows as $row) {
             $savedByBlockMeal[$row->block_id][$row->meal_type] = $row;
         }
+
+        // 3. kamahoから部屋別食数取得
+        //    保存済みの値があるセルでは kamaho の値を使わないため、
+        //    全ブロック×全食事種別が保存済みなら外部通信そのものを省く。
+        $kamahoByRoom = $this->needsKamahoCounts($blocks, $savedByBlockMeal)
+            ? $this->loadKamahoMealCounts($date)
+            : [];
 
         // 4. この日のメニュー一覧（名前・グラム量）
         $menuRows   = $this->Menus->find()
@@ -188,5 +199,76 @@ class BlockOrderQuantitiesController extends AppController
 
         $this->set(['ok' => true, 'saved' => $saved]);
         $this->viewBuilder()->setOption('serialize', ['ok', 'saved']);
+    }
+
+    /**
+     * 保存されていない枠が1つでもあるか（あるときだけ kamaho に問い合わせる）
+     */
+    private function needsKamahoCounts(array $blocks, array $savedByBlockMeal): bool
+    {
+        foreach ($blocks as $block) {
+            foreach ([1, 2, 3, 4] as $mt) {
+                if (!isset($savedByBlockMeal[$block->id][$mt])) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * kamaho の部屋別食数を取得する。
+     *
+     * 1週間分の画面は同じ瞬間に7日分を並べて要求するため、結果も失敗も短時間キャッシュする。
+     * 連携が未設定・停止中でも、7回続けて数百msずつ待たされることがなくなる。
+     */
+    private function loadKamahoMealCounts(string $date): array
+    {
+        $cacheKey = 'kamaho_meal_counts_' . $date;
+        $cached   = Cache::read($cacheKey, 'kamaho');
+        if ($cached !== null) {
+            return is_array($cached) ? $cached : [];
+        }
+
+        // 直前に接続できなかったなら、他の日付でも試さずに0扱いで返す。
+        // 連携先が落ちている間、画面を開くたびに全日分待たされるのを防ぐ。
+        if (Cache::read(self::KAMAHO_DOWN_KEY, 'kamaho')) {
+            return [];
+        }
+
+        $counts = [];
+        try {
+            $counts = $this->buildKamahoServiceFromRequest()->getMealCountsByRoomForDate($date);
+        } catch (\Throwable $e) {
+            if ($this->hasKamahoCredentialHeaders()) {
+                try {
+                    $counts = (new KamahoApiService())->getMealCountsByRoomForDate($date);
+                } catch (\Throwable) {
+                    // kamaho が取れなくても継続（0扱い）
+                }
+            }
+            if (empty($counts)) {
+                Cache::write(self::KAMAHO_DOWN_KEY, true, 'kamaho');
+            }
+        }
+
+        // 失敗時（空配列）も書き込む。同じ失敗を短時間で繰り返し試さないため。
+        Cache::write($cacheKey, $counts, 'kamaho');
+
+        return $counts;
+    }
+
+    private function buildKamahoServiceFromRequest(): KamahoApiService
+    {
+        $options = $this->kamahoCredentialResolverService->resolveKamahoOptions($this->request);
+        return new KamahoApiService($options);
+    }
+
+    private function hasKamahoCredentialHeaders(): bool
+    {
+        if ($this->request->getHeaderLine('X-Kamaho-Login-Account-B64') !== '' && $this->request->getHeaderLine('X-Kamaho-Login-Password-B64') !== '') {
+            return true;
+        }
+        return $this->request->getHeaderLine('X-Kamaho-Login-Account') !== '' && $this->request->getHeaderLine('X-Kamaho-Login-Password') !== '';
     }
 }
