@@ -48,9 +48,9 @@ jobs:
 
       - uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.3"
+          php-version: "8.5"
           tools: composer
-          extensions: intl, mbstring, dom, simplexml, xml, xmlreader, xmlwriter, zip
+          extensions: intl, mbstring, dom, simplexml, xml, xmlreader, xmlwriter, zip, gd
 
       - name: Validate composer.json
         run: composer validate --strict
@@ -87,9 +87,9 @@ jobs:
 
       - uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.3"
+          php-version: "8.5"
           tools: composer
-          extensions: pdo_mysql, intl, mbstring, dom, simplexml, xml, xmlreader, xmlwriter, zip
+          extensions: pdo_mysql, intl, mbstring, dom, simplexml, xml, xmlreader, xmlwriter, zip, gd
 
       - name: Install dependencies
         run: composer install --no-interaction --no-dev --optimize-autoloader
