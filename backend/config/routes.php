@@ -68,6 +68,7 @@ return static function (RouteBuilder $routes): void {
         $routes->connect('/menu-table',       ['controller' => 'MenuTable', 'action' => 'index'], ['_method' => 'GET']);
         $routes->connect('/ai/menu-suggest',  ['controller' => 'Ai', 'action' => 'menuSuggest'], ['_method' => 'POST']);
         $routes->connect('/ai/menu-master-draft', ['controller' => 'Ai', 'action' => 'menuMasterDraft'], ['_method' => 'POST']);
+        $routes->connect('/ai/menu-master-bulk', ['controller' => 'Ai', 'action' => 'menuMasterBulk'], ['_method' => 'POST']);
 
         $routes->resources('BirthdayMenuDates', ['only' => ['index', 'create', 'update', 'delete']]);
 

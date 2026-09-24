@@ -1,65 +1,1192 @@
-/* ==============================
-   フォント最適化
-   ============================== */
-@font-face {
-  font-family: 'Noto Sans JP';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: local('Noto Sans JP');
+/* ==========================================================================
+   食数発注システム — 「食札と集計表」
+   色は意味のみを運ぶ。影とグラデーションは使わない。境界は罫線と地色で作る。
+   ========================================================================== */
+
+:root {
+  /* 地と紙 */
+  --ground: #edf0ee;
+  --paper: #ffffff;
+  --paper-alt: #f6f8f7;
+
+  /* 墨 */
+  --ink: #14201c;
+  --ink-2: #3c4a45;
+  --ink-3: #6e7b76;
+  --ink-4: #9aa5a0;
+  --on-ink: #f2f5f3;
+
+  /* 罫 */
+  --rule: #c9d2cd;
+  --rule-soft: #e3e8e5;
+  --rule-strong: #14201c;
+
+  /* 食札（食事種別） */
+  --tag-1: #b97708; /* 朝 */
+  --tag-2: #1f6f52; /* 昼 */
+  --tag-3: #414f94; /* 夕 */
+  --tag-4: #a4394f; /* 間食 */
+  --tag-1-bg: #fdf3e2;
+  --tag-2-bg: #e7f2ec;
+  --tag-3-bg: #ebedf7;
+  --tag-4-bg: #faeaed;
+
+  /* 状態 */
+  --ok: #1f6f52;
+  --ok-bg: #e7f2ec;
+  --warn: #9a2f2f;
+  --warn-bg: #f9ecec;
+
+  /* 寸法 */
+  --r: 3px;
+  --rail-w: 208px;
+  --head-h: 52px;
+
+  --fs-xs: 0.72rem;
+  --fs-sm: 0.82rem;
+  --fs-base: 0.92rem;
+  --fs-lg: 1.1rem;
+  --fs-xl: 1.45rem;
+  --fs-2xl: 2.4rem;
 }
 
-/* ==============================
-   印刷スタイル
-   ============================== */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-ud), 'BIZ UDPGothic', 'Hiragino Kaku Gothic ProN', 'Meiryo', sans-serif;
+  font-size: var(--fs-base);
+  line-height: 1.7;
+  font-feature-settings: 'palt' 1;
+}
+
+h1, h2, h3, h4 {
+  margin: 0;
+  line-height: 1.35;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+a {
+  color: var(--ink);
+}
+
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* 数値は等幅・桁揃え */
+.num,
+.data td.num,
+.data th.num,
+input[type='number'] {
+  font-family: var(--font-ud-fixed), var(--font-ud), monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  text-align: right;
+}
+
+/* ==========================================================================
+   アプリ骨格
+   ========================================================================== */
+
+.app {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* --- 左の墨の鉛直ナビ --- */
+.rail {
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: var(--rail-w);
+  background: var(--ink);
+  color: var(--on-ink);
+  display: flex;
+  flex-direction: column;
+  z-index: 100;
+}
+
+.rail__mark {
+  padding: 1.15rem 1.1rem 1rem;
+  border-bottom: 1px solid rgba(242, 245, 243, 0.14);
+}
+
+.rail__mark strong {
+  display: block;
+  font-size: 1.02rem;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+}
+
+.rail__mark span {
+  display: block;
+  font-size: var(--fs-xs);
+  color: rgba(242, 245, 243, 0.55);
+  letter-spacing: 0.16em;
+  margin-top: 0.15rem;
+}
+
+.rail__nav {
+  flex: 1;
+  padding: 0.5rem 0;
+  overflow-y: auto;
+}
+
+.rail__link {
+  display: block;
+  padding: 0.5rem 1.1rem 0.5rem 0.85rem;
+  border-left: 4px solid transparent;
+  color: rgba(242, 245, 243, 0.68);
+  text-decoration: none;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.rail__link:hover {
+  color: var(--on-ink);
+  background: rgba(242, 245, 243, 0.06);
+}
+
+.rail__link[aria-current='page'] {
+  color: var(--ink);
+  background: var(--on-ink);
+  border-left-color: var(--tag-1);
+  font-weight: 700;
+}
+
+.rail__foot {
+  padding: 0.85rem 1.1rem 1rem;
+  border-top: 1px solid rgba(242, 245, 243, 0.14);
+  font-size: var(--fs-sm);
+}
+
+.rail__who {
+  line-height: 1.4;
+  margin-bottom: 0.6rem;
+}
+
+.rail__who span {
+  display: block;
+  font-size: var(--fs-xs);
+  color: rgba(242, 245, 243, 0.55);
+}
+
+.rail__out {
+  width: 100%;
+  padding: 0.4rem;
+  background: transparent;
+  color: rgba(242, 245, 243, 0.78);
+  border: 1px solid rgba(242, 245, 243, 0.28);
+  border-radius: var(--r);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.rail__out:hover {
+  background: rgba(242, 245, 243, 0.1);
+  color: var(--on-ink);
+}
+
+/* --- 右側 --- */
+.shell {
+  flex: 1;
+  min-width: 0;
+  margin-left: var(--rail-w);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  height: var(--head-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0 1.6rem;
+  background: var(--paper);
+  border-bottom: 1px solid var(--rule);
+}
+
+.topbar h1 {
+  font-size: var(--fs-lg);
+  letter-spacing: 0.02em;
+}
+
+.topbar__date {
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.page {
+  flex: 1;
+  padding: 1.6rem;
+  max-width: 1500px;
+  width: 100%;
+}
+
+.appfoot {
+  padding: 0.7rem 1.6rem;
+  border-top: 1px solid var(--rule);
+  color: var(--ink-4);
+  font-size: var(--fs-xs);
+}
+
+/* ==========================================================================
+   週ストリップ — 週軸の全画面で共通の背骨
+   ========================================================================== */
+
+.weekbar {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  margin-bottom: 1.1rem;
+}
+
+.weekbar__head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0.7rem;
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.weekbar__range {
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 0 0.4rem;
+}
+
+.weekbar__tools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.weekstrip {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+
+.weekstrip__day {
+  appearance: none;
+  background: var(--paper);
+  border: 0;
+  border-left: 1px solid var(--rule-soft);
+  padding: 0.5rem 0.25rem 0.55rem;
+  font: inherit;
+  color: var(--ink-2);
+  cursor: pointer;
+  text-align: center;
+  line-height: 1.3;
+  display: block;
+}
+
+.weekstrip[data-weeks='2'] {
+  grid-template-columns: repeat(14, 1fr);
+}
+
+.weekstrip[data-weeks='2'] .weekstrip__num {
+  font-size: 0.95rem;
+}
+
+.weekstrip[data-weeks='2'] .weekstrip__day:nth-child(8) {
+  border-left: 1px solid var(--rule-strong);
+}
+
+.weekstrip__day:first-child {
+  border-left: 0;
+}
+
+.weekstrip__day:hover {
+  background: var(--paper-alt);
+}
+
+.weekstrip__day[aria-selected='true'] {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+
+.weekstrip__dow {
+  display: block;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.12em;
+  color: var(--ink-3);
+}
+
+.weekstrip__day[aria-selected='true'] .weekstrip__dow {
+  color: rgba(242, 245, 243, 0.7);
+}
+
+.weekstrip__num {
+  display: block;
+  font-family: var(--font-ud-fixed), monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.weekstrip__state {
+  display: block;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.04em;
+  color: var(--ink-4);
+}
+
+.weekstrip__state[data-state='saved'] {
+  color: var(--ok);
+}
+
+.weekstrip__day[aria-selected='true'] .weekstrip__state {
+  color: rgba(242, 245, 243, 0.8);
+}
+
+.weekstrip__day[data-sat='true'] .weekstrip__dow {
+  color: var(--tag-3);
+}
+
+.weekstrip__day[data-sun='true'] .weekstrip__dow {
+  color: var(--tag-4);
+}
+
+/* ==========================================================================
+   月カレンダー（献立）
+   ========================================================================== */
+
+.calendar__head,
+.calendar__row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr) 86px;
+}
+
+.calendar__head {
+  border-bottom: 1px solid var(--rule-strong);
+  background: var(--paper-alt);
+}
+
+.calendar__dow {
+  padding: 0.3rem 0;
+  text-align: center;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--ink-3);
+  border-left: 1px solid var(--rule-soft);
+}
+
+.calendar__dow:first-child {
+  border-left: 0;
+}
+
+.calendar__dow[data-sun='true'] { color: var(--tag-4); }
+.calendar__dow[data-sat='true'] { color: var(--tag-3); }
+
+.calendar__row {
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.calendar__row:last-child {
+  border-bottom: 0;
+}
+
+.calendar__cell {
+  appearance: none;
+  font: inherit;
+  text-align: left;
+  background: var(--paper);
+  border: 0;
+  border-left: 1px solid var(--rule-soft);
+  padding: 0.3rem 0.35rem 0.4rem;
+  min-height: 86px;
+  cursor: pointer;
+  display: block;
+  width: 100%;
+  color: var(--ink);
+}
+
+.calendar__cell:first-child {
+  border-left: 0;
+}
+
+.calendar__cell:hover {
+  background: var(--paper-alt);
+}
+
+.calendar__cell--empty {
+  background: var(--paper-alt);
+  border-left: 1px solid var(--rule-soft);
+  cursor: default;
+  min-height: 86px;
+}
+
+.calendar__cell--empty:first-child {
+  border-left: 0;
+}
+
+.calendar__num {
+  display: inline-block;
+  min-width: 1.7em;
+  padding: 0 0.2rem;
+  text-align: center;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.calendar__num[data-sun='true'] { color: var(--tag-4); }
+.calendar__num[data-sat='true'] { color: var(--tag-3); }
+
+.calendar__num[data-today='true'] {
+  background: var(--ink);
+  color: var(--on-ink);
+  border-radius: 2px;
+}
+
+/* 誕生日メニューの日。日付のすぐ右に置いて、献立バッジと混ざらないようにする */
+.calendar__birthday {
+  margin-left: 0.25rem;
+  font-size: 0.85rem;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.calendar__badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.12rem;
+  margin-top: 0.2rem;
+}
+
+.calendar__print {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  align-items: stretch;
+  justify-content: center;
+  padding: 0.3rem;
+  background: var(--paper-alt);
+  border-left: 1px solid var(--rule);
+}
+
+.calendar__print .btn {
+  justify-content: center;
+}
+
+@media (max-width: 900px) {
+  .calendar__head,
+  .calendar__row {
+    grid-template-columns: repeat(7, minmax(44px, 1fr)) 70px;
+  }
+
+  .calendar__cell,
+  .calendar__cell--empty {
+    min-height: 66px;
+  }
+}
+
+/* ==========================================================================
+   面（sheet）
+   ========================================================================== */
+
+.sheet {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  margin-bottom: 1.1rem;
+}
+
+.sheet__head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0.9rem;
+  background: var(--ink);
+  color: var(--on-ink);
+  border-radius: calc(var(--r) - 1px) calc(var(--r) - 1px) 0 0;
+}
+
+.sheet__head h2,
+.sheet__head h3 {
+  font-size: var(--fs-base);
+  letter-spacing: 0.04em;
+}
+
+.sheet__head--quiet {
+  background: var(--paper-alt);
+  color: var(--ink);
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.sheet__meta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: var(--fs-sm);
+  color: rgba(242, 245, 243, 0.8);
+}
+
+.sheet__head--quiet .sheet__meta {
+  color: var(--ink-3);
+}
+
+.sheet__body {
+  padding: 0.9rem;
+}
+
+.sheet__scroll {
+  overflow-x: auto;
+}
+
+/* ==========================================================================
+   集計表
+   ========================================================================== */
+
+.data {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.data th {
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--ink-3);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  background: var(--paper-alt);
+  border-bottom: 1px solid var(--rule);
+}
+
+.data td {
+  padding: 0.5rem 0.7rem;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+  border-bottom: 1px solid var(--rule-soft);
+  vertical-align: middle;
+}
+
+.data tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.data tbody tr[data-saved='true'] td {
+  background: var(--ok-bg);
+}
+
+.data .lead {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.data .strong {
+  color: var(--ink);
+  font-weight: 700;
+  font-size: var(--fs-base);
+}
+
+.data .muted,
+.muted {
+  color: var(--ink-4);
+}
+
+.data .actions {
+  display: flex;
+  gap: 0.35rem;
+  justify-content: flex-end;
+}
+
+/* ==========================================================================
+   材料の行（献立表・発注書で共通）
+   名前は折り返し、数量は右端で桁を揃え、記号や納品日は次の行に送る
+   ========================================================================== */
+
+.ingline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0.1rem 0.4rem;
+  padding: 0.25rem 0;
+  border-top: 1px solid var(--rule-soft);
+  font-size: var(--fs-sm);
+}
+
+.ingline__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+.ingline__amount {
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.ingline__meta {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+}
+
+/* ==========================================================================
+   食札
+   ========================================================================== */
+
+.tag {
+  display: inline-block;
+  padding: 0.08rem 0.5rem;
+  border-radius: 2px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  border: 1px solid currentColor;
+}
+
+.tag[data-meal='1'] { color: var(--tag-1); background: var(--tag-1-bg); }
+.tag[data-meal='2'] { color: var(--tag-2); background: var(--tag-2-bg); }
+.tag[data-meal='3'] { color: var(--tag-3); background: var(--tag-3-bg); }
+.tag[data-meal='4'] { color: var(--tag-4); background: var(--tag-4-bg); }
+
+.tag--solid {
+  border-color: transparent;
+  color: var(--on-ink);
+}
+
+.tag--ok { color: var(--ok); background: var(--ok-bg); }
+.tag--warn { color: var(--warn); background: var(--warn-bg); }
+.tag--plain { color: var(--ink-3); background: var(--paper-alt); }
+
+/* 食事種別の左端色帯 */
+.mealband {
+  border-left: 4px solid var(--rule);
+}
+.mealband[data-meal='1'] { border-left-color: var(--tag-1); }
+.mealband[data-meal='2'] { border-left-color: var(--tag-2); }
+.mealband[data-meal='3'] { border-left-color: var(--tag-3); }
+.mealband[data-meal='4'] { border-left-color: var(--tag-4); }
+
+/* ==========================================================================
+   操作
+   ========================================================================== */
+
+.btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.85rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  line-height: 1.6;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--paper-alt);
+  border-color: var(--ink-3);
+}
+
+.btn:disabled {
+  color: var(--ink-4);
+  background: var(--paper-alt);
+  cursor: not-allowed;
+}
+
+.btn--primary {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--on-ink);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: #24332d;
+  border-color: #24332d;
+}
+
+.btn--primary:disabled {
+  background: var(--rule);
+  border-color: var(--rule);
+  color: var(--paper);
+}
+
+.btn--danger {
+  color: var(--warn);
+  border-color: #d9b6b6;
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: var(--warn-bg);
+  border-color: var(--warn);
+}
+
+.btn--sm {
+  padding: 0.15rem 0.55rem;
+  font-size: var(--fs-xs);
+}
+
+/* 墨の面に載るボタン */
+.sheet__head:not(.sheet__head--quiet) .btn,
+.on-ink .btn {
+  background: transparent;
+  border-color: rgba(242, 245, 243, 0.45);
+  color: var(--on-ink);
+}
+
+.sheet__head:not(.sheet__head--quiet) .btn:hover:not(:disabled),
+.on-ink .btn:hover:not(:disabled) {
+  background: rgba(242, 245, 243, 0.14);
+  border-color: var(--on-ink);
+}
+
+.sheet__head:not(.sheet__head--quiet) .btn:disabled,
+.on-ink .btn:disabled {
+  color: rgba(242, 245, 243, 0.4);
+  background: transparent;
+}
+
+.btnrow {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* 仕入先などの選択リスト */
+.menulist {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 180px;
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: var(--r);
+  z-index: 60;
+  overflow: hidden;
+}
+
+.menulist__label {
+  padding: 0.3rem 0.75rem;
+  background: var(--ink);
+  color: rgba(242, 245, 243, 0.75);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.06em;
+}
+
+.menulist__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.45rem 0.75rem;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--rule-soft);
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.menulist__item:hover {
+  background: var(--paper-alt);
+}
+
+/* ==========================================================================
+   入力
+   ========================================================================== */
+
+.field {
+  display: block;
+  margin-bottom: 0.8rem;
+}
+
+.field > span,
+.field__label {
+  display: block;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--ink-2);
+  margin-bottom: 0.2rem;
+}
+
+.field__hint {
+  display: block;
+  font-size: var(--fs-xs);
+  color: var(--ink-4);
+  margin-top: 0.15rem;
+  font-weight: 400;
+}
+
+.input,
+.select,
+.textarea {
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-base);
+  line-height: 1.6;
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+  outline: 2px solid var(--ink);
+  outline-offset: -1px;
+  border-color: var(--ink);
+}
+
+.input::placeholder,
+.textarea::placeholder {
+  color: var(--ink-4);
+}
+
+.input:disabled,
+.select:disabled,
+.textarea:disabled {
+  background: var(--paper-alt);
+  color: var(--ink-4);
+}
+
+.input--num {
+  font-family: var(--font-ud-fixed), monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  font-weight: 700;
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 3.5rem;
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0 0.9rem;
+}
+
+/* ==========================================================================
+   通知・空状態
+   ========================================================================== */
+
+.notice {
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--ink-3);
+  border-radius: var(--r);
+  padding: 0.5rem 0.8rem;
+  margin-bottom: 0.9rem;
+  font-size: var(--fs-sm);
+  background: var(--paper);
+}
+
+.notice--error {
+  border-left-color: var(--warn);
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.notice--ok {
+  border-left-color: var(--ok);
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.empty {
+  padding: 2.5rem 1rem;
+  text-align: center;
+  color: var(--ink-3);
+}
+
+.empty p {
+  margin: 0 0 0.5rem;
+}
+
+/* ==========================================================================
+   モーダル
+   ========================================================================== */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 32, 28, 0.55);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  z-index: 200;
+}
+
+.modal {
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: var(--r);
+  width: 100%;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal__head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.9rem;
+  background: var(--ink);
+  color: var(--on-ink);
+}
+
+.modal__head h2,
+.modal__head h3 {
+  font-size: var(--fs-base);
+  letter-spacing: 0.04em;
+}
+
+.modal__body {
+  padding: 0.9rem;
+  overflow-y: auto;
+}
+
+.modal__foot {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 0.6rem 0.9rem;
+  border-top: 1px solid var(--rule);
+  background: var(--paper-alt);
+}
+
+/* ==========================================================================
+   数値の見出し（ダッシュボード）
+   ========================================================================== */
+
+.figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  background: var(--paper);
+  margin-bottom: 1.1rem;
+}
+
+.figure {
+  padding: 0.8rem 1rem;
+  border-left: 1px solid var(--rule-soft);
+}
+
+.figure:first-child {
+  border-left: 0;
+}
+
+.figure__label {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  letter-spacing: 0.06em;
+}
+
+.figure__value {
+  font-family: var(--font-ud-fixed), monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-2xl);
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.figure__value[data-alert='true'] {
+  color: var(--warn);
+}
+
+.figure__unit {
+  font-family: var(--font-ud), sans-serif;
+  font-size: var(--fs-sm);
+  font-weight: 400;
+  color: var(--ink-3);
+  margin-left: 0.2rem;
+}
+
+/* ==========================================================================
+   応答性
+   ========================================================================== */
+
+@media (max-width: 900px) {
+  :root {
+    --rail-w: 0px;
+  }
+
+  .app {
+    display: block;
+  }
+
+  .rail {
+    position: static;
+    width: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 0.5rem;
+    padding: 0.5rem 0.9rem;
+  }
+
+  .rail__mark {
+    padding: 0;
+    border: 0;
+    margin-right: auto;
+  }
+
+  .rail__nav {
+    order: 3;
+    flex-basis: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    padding: 0.5rem 0 0;
+  }
+
+  .rail__link {
+    border-left: 0;
+    border-bottom: 3px solid transparent;
+    padding: 0.2rem 0.5rem;
+  }
+
+  .rail__link[aria-current='page'] {
+    border-left: 0;
+    border-bottom-color: var(--tag-1);
+  }
+
+  .rail__foot {
+    border: 0;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+
+  .rail__who {
+    margin: 0;
+  }
+
+  .rail__out {
+    width: auto;
+    padding: 0.2rem 0.6rem;
+  }
+
+  .shell {
+    margin-left: 0;
+  }
+
+  .page,
+  .topbar {
+    padding-left: 0.9rem;
+    padding-right: 0.9rem;
+  }
+
+  .figure {
+    border-left: 0;
+    border-top: 1px solid var(--rule-soft);
+  }
+
+  .figure:first-child {
+    border-top: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ==========================================================================
+   印刷 — 紙が最終成果物
+   ========================================================================== */
+
 @media print {
-  /* サイドバー・ヘッダー・フッターを非表示 */
-  .app-sidebar,
-  .app-header,
-  .app-footer,
+  .rail,
+  .topbar,
+  .appfoot,
   .no-print {
     display: none !important;
   }
 
-  /* 全体レイアウトのリセット */
   body {
-    background: white !important;
+    background: #fff;
   }
 
-  .app-layout {
-    display: block !important;
+  .app {
+    display: block;
   }
 
-  .app-main-wrapper {
-    margin-left: 0 !important;
-    width: 100% !important;
-    min-height: unset !important;
+  .shell {
+    margin-left: 0;
+    min-height: auto;
   }
 
-  .app-main {
-    padding: 0.5cm 0.5cm !important;
+  .page {
+    padding: 0.5cm;
+    max-width: none;
   }
 
-  /* 業者カード・日付カードは途中で改ページしない */
-  .supplier-card {
-    break-inside: avoid;
-    page-break-inside: avoid;
-    box-shadow: none !important;
-    border: 1px solid #e5e7eb !important;
-    margin-bottom: 0.8rem;
-  }
-
+  .sheet,
+  .supplier-card,
   .date-card {
     break-inside: avoid;
     page-break-inside: avoid;
+    border: 1px solid #333;
   }
 
-  /* 業者間で改ページを許可 */
-  .supplier-card + .supplier-card {
-    break-before: auto;
+  .sheet__head,
+  .modal__head {
+    background: #fff !important;
+    color: #000 !important;
+    border-bottom: 1.5px solid #000;
   }
 
-  /* 印刷専用要素を表示 */
+  .data th {
+    background: #fff !important;
+    border-bottom: 1px solid #000;
+  }
+
+  .data td {
+    border-bottom: 1px solid #999;
+  }
+
   .print-only {
     display: block !important;
   }

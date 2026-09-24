@@ -6,6 +6,7 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 use ZipArchive;
 use DOMDocument;
 use DateTime;
+use Cake\Log\Log;
 
 /**
  * 献立表 API
@@ -25,9 +26,20 @@ class MenuTableController extends AppController
         'Y' => 'FFD1FAE5', // 八百喜: 緑
         'M' => 'FFFEE2E2', // 河野牛豚肉店: 赤系
         'F' => 'FFE0F2FE', // 魚丹: 水色
-        'S' => 'FF1E3A8A', // スーパー: 濃い青
+        'S' => 'FFC7D4F0', // スーパー: 淡い青（濃紺だと黒文字が読めないため薄くした）
         'Z' => null,       // 在庫: 色なし
     ];
+
+    // 印刷の縮尺はシートの横幅で決まり、縦は4割ほど余る。
+    // そこで空行は詰め、余った高さを実データのある行に配分して読みやすくする。
+    /** 空行の高さ（詰める） */
+    private const STAFF_ROW_EMPTY = 14;
+    /** 材料1件の行の高さ */
+    private const STAFF_ROW_ING = 50;
+    /** 材料名が長く折り返す行の高さ */
+    private const STAFF_ROW_ING_WRAP = 64;
+    /** 献立名が折り返す行の高さ */
+    private const STAFF_ROW_MENU_WRAP = 68;
 
     public function initialize(): void
     {
@@ -270,6 +282,15 @@ class MenuTableController extends AppController
             if (!$cellEl) {
                 $cellEl = $sheetDom->createElementNS($ns, 'c');
                 $cellEl->setAttribute('r', $ref);
+                // 同じ行の既存セルから書式を引き継ぐ。
+                // 引き継がないと新規セルだけ既定書式（左寄せ）になり、
+                // テンプレートに元からあるセル（中央寄せ）と混在して見づらくなる。
+                foreach ($rowEl->getElementsByTagNameNS($ns, 'c') as $sibling) {
+                    if ($sibling->hasAttribute('s')) {
+                        $cellEl->setAttribute('s', $sibling->getAttribute('s'));
+                        break;
+                    }
+                }
                 // 列順で挿入
                 $inserted = false;
                 foreach ($rowEl->getElementsByTagNameNS($ns, 'c') as $c) {
@@ -319,7 +340,8 @@ class MenuTableController extends AppController
             $date = $weekData[$i]['date'] ?? '';
             if ($date !== '') {
                 $dt = new DateTime($date);
-                $setCell($dayCol[$i] . '8', $this->formatJpDate($dt));
+                // テンプレートの直下の行に曜日（月）が入っているため、ここでは曜日を出さない
+                $setCell($dayCol[$i] . '8', (int)$dt->format('n') . '月' . (int)$dt->format('j') . '日');
             }
         }
 
@@ -338,7 +360,7 @@ class MenuTableController extends AppController
                 $row = $start;
                 foreach ($meals[$mealType] as $menu) {
                     if ($row >= $start + $count) break;
-                    $setCell($col . $row, $menu['menu_name']);
+                    $setCell($col . $row, $this->wrapMenuNameForChildren((string)$menu['menu_name']));
                     $row++;
                 }
             }
@@ -349,6 +371,7 @@ class MenuTableController extends AppController
 
         // 子供用は1ページ出力前提のため、シート実体範囲を印刷範囲(A1:I24)に正規化
         // (テンプレート外の余剰行/列があると SinglePageSheets で過縮小される)
+        $this->normalizeChildrenCellStyles($sheetDom, $ns);
         $this->normalizeChildrenSheetForSinglePage($sheetDom, $ns);
 
         // --- SST の count を更新 ---
@@ -362,6 +385,54 @@ class MenuTableController extends AppController
         $zip->close();
 
         return $tmpFile;
+    }
+
+    /**
+     * 献立セル（C〜I列）の書式を行ごとにそろえる。
+     *
+     * テンプレートは長年の手編集でセル書式が不揃いになっており、
+     * 同じ行でも 1〜2セルだけ左寄せの書式が混ざって印刷される。
+     * 行内の多数派のスタイル番号に合わせることで、
+     * 行ごとの罫線や背景は保ったまま、配置のばらつきだけを消す。
+     */
+    private function normalizeChildrenCellStyles(DOMDocument $sheetDom, string $ns): void
+    {
+        $cols = ['C', 'D', 'E', 'F', 'G', 'H', 'I'];
+
+        foreach ($sheetDom->getElementsByTagNameNS($ns, 'row') as $rowEl) {
+            $rowNum = (int)$rowEl->getAttribute('r');
+            // 献立の記入欄のみが対象。タイトルや日付ヘッダーには触れない
+            if ($rowNum < 10 || $rowNum > 24) {
+                continue;
+            }
+
+            $targets = [];
+            $tally   = [];
+            foreach ($rowEl->getElementsByTagNameNS($ns, 'c') as $cellEl) {
+                if (!preg_match('/^([A-Z]+)\d+$/', $cellEl->getAttribute('r'), $m)) {
+                    continue;
+                }
+                if (!in_array($m[1], $cols, true) || !$cellEl->hasAttribute('s')) {
+                    continue;
+                }
+                $style     = $cellEl->getAttribute('s');
+                $targets[] = $cellEl;
+                $tally[$style] = ($tally[$style] ?? 0) + 1;
+            }
+
+            if (count($targets) < 3 || empty($tally)) {
+                continue;
+            }
+            arsort($tally);
+            $majority = (string)array_key_first($tally);
+            // 全セルが同じならそのまま
+            if ($tally[$majority] === count($targets)) {
+                continue;
+            }
+            foreach ($targets as $cellEl) {
+                $cellEl->setAttribute('s', $majority);
+            }
+        }
     }
 
     private function normalizeChildrenSheetForSinglePage(DOMDocument $sheetDom, string $ns): void
@@ -458,13 +529,22 @@ class MenuTableController extends AppController
         // weekStart+5 = 土曜日を先頭日とするシート名を検索して使用する
         $satDate   = (clone $weekStart)->modify('+5 days');
         $satLabel  = (int)$satDate->format('n') . '月' . (int)$satDate->format('j') . '日';
-        $sheetIdx  = 0;
+        $sheetIdx  = null;
         for ($i = 0; $i < $spreadsheet->getSheetCount(); $i++) {
             if (strpos($spreadsheet->getSheet($i)->getTitle(), $satLabel) === 0) {
                 $sheetIdx = $i;
                 break;
             }
         }
+
+        if ($sheetIdx === null) {
+            // 該当週のシートが無い場合（テンプレートの収録範囲外）。
+            // 先頭シートを黙って使い回すと、そのシート固有の内容が残る恐れがあるため、
+            // 複製したシートを使う。日付・曜日・献立・メモ欄はこのあとすべて
+            // 要求された週の値で上書きするので、借りるのはレイアウトだけになる。
+            $sheetIdx = $this->cloneStaffTemplateSheet($spreadsheet, $satDate);
+        }
+
         // PDF/印刷時にテンプレート全シートが出ないよう、対象週シートのみ残す
         for ($i = $spreadsheet->getSheetCount() - 1; $i >= 0; $i--) {
             if ($i !== $sheetIdx) {
@@ -486,6 +566,27 @@ class MenuTableController extends AppController
             '　　' . $this->formatJpDate($titleStart) . '～　' . $this->formatJpDate($titleEnd) . '献立表',
             \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING
         );
+
+        // 凡例（1行目）のスーパーも濃い青のままだと、薄くしたデータセルと対応が取れない。
+        // 他の凡例（黄・緑・桃・水色）と同じ淡さにそろえる。
+        foreach ($sheet->getRowIterator(1, 1) as $legendRow) {
+            foreach ($legendRow->getCellIterator() as $legendCell) {
+                if (mb_strpos((string)$legendCell->getValue(), 'スーパー') === false) {
+                    continue;
+                }
+                $legendStyle = $sheet->getStyle($legendCell->getCoordinate());
+                $legendStyle->getFill()
+                    ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+                    ->getStartColor()->setARGB('FFB4C7E7');
+                $legendStyle->getFont()->getColor()->setARGB('FF000000');
+            }
+        }
+
+        // 納品日の列幅がテンプレートで不揃い（F=10.00 だけ狭く「9月24日(木」で切れる）。
+        // 4グループとも「9月26日(土)」が収まる幅にそろえる。
+        foreach (['F', 'M', 'T', 'AA'] as $delCol) {
+            $sheet->getColumnDimension($delCol)->setWidth(11.5);
+        }
 
         $colGroups = [
             'A' => ['A', 'B', 'C', 'D', 'E', 'F'],
@@ -519,6 +620,7 @@ class MenuTableController extends AppController
             3 => ['start' => 39, 'count' => 10],
         ];
 
+        $this->resetStaffRowHeights($sheet, $topMealRows);
         foreach ($topSection as $entry) {
             $dayIndex = $entry['dayOffset'];
             $date     = $weekData[$dayIndex]['date']  ?? '';
@@ -537,6 +639,7 @@ class MenuTableController extends AppController
         // V-AA 列（下半メモエリア）と stray セルをまとめてクリア
         $this->clearStaffExtraAreas($sheet);
 
+        $this->resetStaffRowHeights($sheet, $bottomMealRows);
         foreach ($bottomSection as $entry) {
             $dayIndex = $entry['dayOffset'];
             $date     = $weekData[$dayIndex]['date']  ?? '';
@@ -558,6 +661,49 @@ class MenuTableController extends AppController
         return $spreadsheet;
     }
 
+    /**
+     * テンプレートに該当週のシートが無いときに、レイアウトを複製して1枚作る。
+     *
+     * テンプレートのシート名はテンプレートを作った年の土曜日が基準なので、
+     * 年が変われば基本的に一致しない（＝ほぼ常にこちらを通る）。
+     * 先頭シートをそのまま使い回すと、そのシート固有の記入が残る可能性がある。
+     *
+     * 複製元には、収録されている週のうち最初のものを使う。
+     * どのシートも土曜はじまりで同じ構造なので、レイアウトは共通で問題ない。
+     *
+     * @param DateTime $satDate 対象週の土曜日
+     * @return int 複製したシートのインデックス
+     */
+    private function cloneStaffTemplateSheet(
+        \PhpOffice\PhpSpreadsheet\Spreadsheet $spreadsheet,
+        DateTime $satDate
+    ): int {
+        $source = $spreadsheet->getSheet(0);
+        $clone  = clone $source;
+
+        // シート名は31文字までで、: \\ / ? * [ ] が使えない
+        $title = mb_substr(
+            (int)$satDate->format('n') . '月' . (int)$satDate->format('j') . '日週',
+            0,
+            31
+        );
+        $suffix = 1;
+        $unique = $title;
+        while ($spreadsheet->sheetNameExists($unique)) {
+            $unique = mb_substr($title, 0, 28) . '_' . $suffix;
+            $suffix++;
+        }
+        $clone->setTitle($unique);
+        $spreadsheet->addSheet($clone);
+
+        Log::debug(sprintf(
+            'MenuTable: %s 週に対応するシートが無いためレイアウトを複製しました',
+            $satDate->format('Y-m-d')
+        ));
+
+        return $spreadsheet->getIndex($clone);
+    }
+
     private function clearStaffSection($sheet, array $cg, array $mealRows): void
     {
         [, $menuCol, $ingCol, $qtyCol, $supCol, $delCol] = $cg;
@@ -565,7 +711,31 @@ class MenuTableController extends AppController
             for ($r = $start; $r < $start + $count; $r++) {
                 foreach ([$menuCol, $ingCol, $qtyCol, $supCol, $delCol] as $col) {
                     $sheet->getCell($col . $r)->setValue('');
+                    // 値だけ消すとテンプレート由来の塗りが残り、意味のない色帯として印刷される
+                    $sheet->getStyle($col . $r)->getFill()
+                        ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_NONE);
                 }
+                // 前回の献立名の結合が残ると次の週で行がずれるので解除しておく
+                foreach (array_keys($sheet->getMergeCells()) as $range) {
+                    if (preg_match('/^' . $menuCol . '(\d+):' . $menuCol . '(\d+)$/', $range, $mm)
+                        && (int)$mm[1] <= $r && $r <= (int)$mm[2]) {
+                        $sheet->unmergeCells($range);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 行の高さを一旦そろえる。
+     * 空行を詰めて、その分を実データのある行に回すため。
+     * 日付列ごとに呼ぶと後の列が前の列の高さを潰すので、セクション単位で1回だけ呼ぶこと。
+     */
+    private function resetStaffRowHeights($sheet, array $mealRows): void
+    {
+        foreach ($mealRows as ['start' => $start, 'count' => $count]) {
+            for ($r = $start; $r < $start + $count; $r++) {
+                $sheet->getRowDimension($r)->setRowHeight(self::STAFF_ROW_EMPTY);
             }
         }
     }
@@ -645,8 +815,8 @@ class MenuTableController extends AppController
         $sheet->getStyle("V{$row}:AA{$row}")->getAlignment()
             ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER)
             ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
-        $sheet->getStyle("V{$row}:AA{$row}")->getFont()->setSize(11);
-        $sheet->getRowDimension($row)->setRowHeight(18);
+        $sheet->getStyle("V{$row}:AA{$row}")->getFont()->setSize(16);
+        $sheet->getRowDimension($row)->setRowHeight(32);
         $row++;
 
         foreach ($suppliers as $sup) {
@@ -696,19 +866,27 @@ class MenuTableController extends AppController
                 $sheet->getCell('AA' . $targetRow)->setValueExplicit($chunk[2] ?? '', $st);
             }
 
-            $sheet->getStyle("V{$row}:AA{$endRow}")->getFont()->setBold(false);
-            $sheet->getStyle("V{$row}:AA{$endRow}")->getFont()->setSize(11);
+            $sheet->getStyle("V{$row}:AA{$endRow}")->getFont()->setBold(true);
+            $sheet->getStyle("V{$row}:AA{$endRow}")->getFont()->setSize(15);
+            $sheet->getStyle("V{$row}:W{$endRow}")->getFont()->setSize(16);
             $sheet->getStyle("V{$row}:AA{$endRow}")->getAlignment()
-                ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_TOP)
+                ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER)
                 ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_LEFT)
+                ->setIndent(1)
                 ->setWrapText(true);
+            // 発注先名は見出しなので中央に置く（左端の罫線に文字が張り付くのを防ぐ）
+            $sheet->getStyle("V{$row}:W{$endRow}")->getAlignment()
+                ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER)
+                ->setIndent(0);
 
             $lineCount = max(count($uniqueOrderDates), 1);
             for ($r = $row; $r <= $endRow; $r++) {
-                $sheet->getRowDimension($r)->setRowHeight(20 * $lineCount);
+                $sheet->getRowDimension($r)->setRowHeight(max(40, 30 * $lineCount));
             }
 
             $fillColor = $this->memoSupplierColor((string)($sup['code'] ?? ''), (string)$sup['name']);
+            // 発注先名の文字色も黒で固定する（淡色背景に白文字が残ると消えるため）
+            $sheet->getStyle("V{$row}:W{$endRow}")->getFont()->getColor()->setARGB('FF000000');
             $fill = $sheet->getStyle("V{$row}:W{$endRow}")->getFill();
             if ($fillColor === null) {
                 $fill->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_NONE);
@@ -810,6 +988,8 @@ class MenuTableController extends AppController
     private function fillStaffSection($sheet, array $cg, array $mealRows, array $meals, DateTime $weekStart): void
     {
         [, $menuCol, $ingCol, $qtyCol, $supCol, $delCol] = $cg;
+        $st = \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING;
+
         foreach ([1, 2, 3] as $mealType) {
             if (!isset($mealRows[$mealType]) || !isset($meals[$mealType])) continue;
             $startRow = $mealRows[$mealType]['start'];
@@ -821,30 +1001,140 @@ class MenuTableController extends AppController
                 if ($row >= $endRow) break;
                 $menuName    = $menu['menu_name'];
                 $ingredients = $menu['ingredients'];
+                $menuStart   = $row;
                 if (empty($ingredients)) {
-                    $sheet->getCell($menuCol . $row)->setValueExplicit($menuName, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                    $sheet->getStyle($menuCol . $row)->getFont()->setBold(false);
                     $row++;
                 } else {
-                    foreach ($ingredients as $i => $ing) {
+                    foreach ($ingredients as $ing) {
                         if ($row >= $endRow) break;
-                        if ($i === 0) {
-                            $sheet->getCell($menuCol . $row)->setValueExplicit($menuName, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                            $sheet->getStyle($menuCol . $row)->getFont()->setBold(false);
+
+                        $supplierCode = (string)($ing['supplier_code'] ?? '');
+                        $fillColor = $this->memoSupplierColor($supplierCode, '');
+
+                        $sheet->getCell($ingCol . $row)->setValueExplicit($ing['name'], $st);
+                        $sheet->getCell($qtyCol . $row)->setValueExplicit($this->fmtQty($ing['amount'], $ing['unit']), $st);
+                        $sheet->getCell($supCol . $row)->setValueExplicit($supplierCode, $st);
+                        $sheet->getCell($delCol . $row)->setValueExplicit($ing['delivery_date'], $st);
+
+                        foreach ([$ingCol, $qtyCol, $supCol, $delCol] as $col) {
+                            $style = $sheet->getStyle($col . $row);
+                            $style->getFont()->setBold($col === $supCol || $col === $delCol)->setSize(13);
+                            $style->getAlignment()
+                                ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER)
+                                ->setWrapText($col === $ingCol);
                         }
-                        $sheet->getCell($ingCol . $row)->setValueExplicit($ing['name'], \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                        $sheet->getCell($qtyCol . $row)->setValueExplicit($this->fmtQty($ing['amount'], $ing['unit']), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                        $sheet->getCell($supCol . $row)->setValueExplicit($ing['supplier_code'], \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                        $sheet->getCell($delCol . $row)->setValueExplicit($ing['delivery_date'], \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                        $sheet->getStyle($ingCol . $row)->getFont()->setBold(false);
-                        $sheet->getStyle($qtyCol . $row)->getFont()->setBold(false);
-                        $sheet->getStyle($supCol . $row)->getFont()->setBold(false);
-                        $sheet->getStyle($delCol . $row)->getFont()->setBold(false);
+                        $sheet->getStyle($supCol . $row)->getFont()->setSize(14)->setBold(true);
+                        $sheet->getStyle($delCol . $row)->getFont()->setSize(12)->setBold(true);
+
+                        // 色付けは発注先セルのみ。
+                        // 文字色はテンプレート任せにせず必ず黒にする。
+                        // 淡色の背景に白文字が残ると記号が消えるため。
+                        $sheet->getStyle($supCol . $row)->getFont()->getColor()->setARGB('FF000000');
+                        if ($fillColor !== null) {
+                            $sheet->getStyle($supCol . $row)->getFill()
+                                ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+                                ->getStartColor()
+                                ->setARGB($fillColor);
+                        } else {
+                            $sheet->getStyle($supCol . $row)->getFill()
+                                ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_NONE);
+                        }
+
+                        $ingNameLen = mb_strlen((string)$ing['name']);
+                        $rowHeight = $ingNameLen > 10 ? self::STAFF_ROW_ING_WRAP : self::STAFF_ROW_ING;
+                        $current = $sheet->getRowDimension($row)->getRowHeight();
+                        if ($current < $rowHeight) {
+                            $sheet->getRowDimension($row)->setRowHeight($rowHeight);
+                        }
                         $row++;
                     }
                 }
+
+                // 材料の行数が決まってから献立名を書く。
+                // 2行以上なら縦に結合して、どの材料がどの献立のものか一目で分かるようにする。
+                $span = max(1, $row - $menuStart);
+                $this->styleStaffMenuCell($sheet, $menuCol, $menuStart, $span, $menuName);
             }
         }
+    }
+
+    /**
+     * 献立名を書き、材料が複数行にわたる場合は縦に結合する。
+     *
+     * 結合しないと2行目以降の献立名が空欄になり、
+     * どの材料がどの献立のものか紙の上で追えなくなる。
+     *
+     * @param string $col      献立名の列
+     * @param int    $startRow 献立の先頭行
+     * @param int    $span     その献立が使う行数（材料の件数）
+     */
+    private function styleStaffMenuCell($sheet, string $col, int $startRow, int $span, string $menuName): void
+    {
+        $cell        = $col . $startRow;
+        $displayName = $this->wrapMenuNameForDisplay($menuName);
+
+        $sheet->getCell($cell)->setValueExplicit(
+            $displayName,
+            \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING
+        );
+
+        if ($span > 1) {
+            $endRow = $startRow + $span - 1;
+            $sheet->mergeCells($col . $startRow . ':' . $col . $endRow);
+        }
+
+        $style = $sheet->getStyle($span > 1 ? $col . $startRow . ':' . $col . ($startRow + $span - 1) : $cell);
+        $style->getFont()->setBold(true)->setSize(14);
+        $style->getAlignment()
+            ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER)
+            ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_LEFT)
+            ->setWrapText(true);
+
+        // 1行しか使わない献立で名前が長いときだけ、折り返し用の高さを足す。
+        // 結合している場合は材料の行数分の高さがあるので不要。
+        if ($span === 1 && (mb_strlen($menuName) > 8 || str_contains($displayName, "\n"))) {
+            $current = $sheet->getRowDimension($startRow)->getRowHeight();
+            if ($current < self::STAFF_ROW_MENU_WRAP) {
+                $sheet->getRowDimension($startRow)->setRowHeight(self::STAFF_ROW_MENU_WRAP);
+            }
+        }
+    }
+
+    /**
+     * 長い献立名を2行表示しやすい位置で改行する
+     */
+    private function wrapMenuNameForDisplay(string $name): string
+    {
+        $name = trim($name);
+        if ($name === '' || mb_strlen($name) <= 8 || str_contains($name, "\n")) {
+            return $name;
+        }
+
+        // 「と」「の」「・」「／」の直後、または中央付近で分割
+        $breakChars = ['と', 'の', '・', '／', '/', '　', ' '];
+        $len = mb_strlen($name);
+        $bestPos = null;
+        $bestScore = PHP_INT_MAX;
+        for ($i = 3; $i < $len - 2; $i++) {
+            $ch = mb_substr($name, $i, 1);
+            if (!in_array($ch, $breakChars, true)) {
+                continue;
+            }
+            $score = abs($i - (int)floor($len / 2));
+            if ($score < $bestScore) {
+                $bestScore = $score;
+                $bestPos = $i + 1;
+            }
+        }
+        if ($bestPos === null) {
+            $bestPos = (int)ceil($len / 2);
+        }
+        return mb_substr($name, 0, $bestPos) . "\n" . mb_substr($name, $bestPos);
+    }
+
+    private function wrapMenuNameForChildren(string $name): string
+    {
+        return $this->wrapMenuNameForDisplay($name);
     }
 
     // ----------------------------------------

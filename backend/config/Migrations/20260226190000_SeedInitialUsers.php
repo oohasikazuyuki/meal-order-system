@@ -17,7 +17,7 @@ class SeedInitialUsers extends AbstractMigration
         }
 
         // 初期管理者 (ID: 1 / password: admin1234)
-        $exists = $this->table('users')->select(['id'])->where(['id' => 1])->execute()->fetch();
+        $exists = $this->fetchRow("SELECT id FROM users WHERE id = 1 LIMIT 1");
         if (!$exists) {
             $this->table('users')->insert([
                 'id' => 1,
@@ -32,7 +32,7 @@ class SeedInitialUsers extends AbstractMigration
         }
 
         // 初期一般ユーザー (ID: 2 / password: user1234)
-        $exists = $this->table('users')->select(['id'])->where(['id' => 2])->execute()->fetch();
+        $exists = $this->fetchRow("SELECT id FROM users WHERE id = 2 LIMIT 1");
         if (!$exists) {
             $this->table('users')->insert([
                 'id' => 2,
