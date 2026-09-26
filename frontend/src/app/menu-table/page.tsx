@@ -13,6 +13,7 @@ import {
 import { getMondayOf, addWeeks, formatShort, DOW_MON_FIRST } from '../_lib/date'
 import { getHoliday } from '../_lib/holiday'
 import { usePdfDocument } from '../_lib/usePdfDocument'
+import { useWeekParam } from '../_lib/useUrlState'
 import WeekBar from '../_components/WeekBar'
 
 const PdfViewerModal = dynamic(() => import('../_components/PdfViewerModal'), { ssr: false })
@@ -47,7 +48,7 @@ function formatAmount(amount: number): string {
 type ViewType = 'staff' | 'children'
 
 export default function MenuTablePage() {
-  const [weekStart, setWeekStart] = useState<string>(() => getMondayOf(new Date()))
+  const [weekStart, setWeekStart] = useWeekParam()
   const [preview, setPreview] = useState<MenuTableResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const { doc: pdfDoc, pendingKey, error, setError, open: openPdf, close: closePdf } = usePdfDocument()

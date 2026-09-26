@@ -12,13 +12,14 @@ import {
 import { getMondayOf, addWeeks, addDays, todayStr, formatShort } from '../_lib/date'
 import WeekBar from '../_components/WeekBar'
 import { usePdfDocument } from '../_lib/usePdfDocument'
+import { useWeekParam } from '../_lib/useUrlState'
 
 const PdfViewerModal = dynamic(() => import('../_components/PdfViewerModal'), { ssr: false })
 
 type Ingredient = { name: string; amount: number; unit: string }
 
 export default function OrderSheetsPage() {
-  const [weekStart, setWeekStart] = useState<string>(() => getMondayOf(new Date()))
+  const [weekStart, setWeekStart] = useWeekParam()
   const [preview, setPreview] = useState<OrderSheetPreviewResponse | null>(null)
   const [inventory, setInventory] = useState<InventoryPreviewResponse | null>(null)
   const [loading, setLoading] = useState(false)
