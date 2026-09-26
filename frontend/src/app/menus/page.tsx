@@ -24,6 +24,8 @@ import { DOW, toDateStr, todayStr, getMondayOf, formatLong } from '../_lib/date'
 import ConfirmDialog from '../_components/ConfirmDialog'
 import { useModal } from '../_lib/useModal'
 import { getHoliday } from '../_lib/holiday'
+import { usePdfDocument } from '../_lib/usePdfDocument'
+import PdfViewerModal from '../_components/PdfViewerModal'
 
 const MEAL_TYPES: MealType[] = [1, 2, 3, 4]
 const AI_PUBLIC_ENABLED = process.env.NEXT_PUBLIC_AI_PUBLIC_ENABLED === 'true'
@@ -79,7 +81,13 @@ export default function MenusPage() {
   const [copyCycleMonths, setCopyCycleMonths] = useState(2)
   const [copyIncludeBirthday, setCopyIncludeBirthday] = useState(true)
   const [copyOverwrite, setCopyOverwrite] = useState(false)
-  const [weekDl, setWeekDl] = useState<Record<string, boolean>>({})
+  const {
+    doc: pdfDoc,
+    pendingKey: pdfPendingKey,
+    error: pdfError,
+    open: openPdf,
+    close: closePdf,
+  } = usePdfDocument()
   const [confirmMonthAi, setConfirmMonthAi] = useState(false)
 
   const [user, setUser] = useState(() => getStoredUser())
@@ -143,36 +151,17 @@ export default function MenusPage() {
   const weeks = buildCalendar(year, month)
   const daysInMonth = new Date(year, month, 0).getDate()
 
-  const handleWeekPrint = async (weekStart: string, type: 'staff' | 'children') => {
-    const key = weekStart + type
-    setWeekDl((prev) => ({ ...prev, [key]: true }))
-    try {
-      const res = await fetchMenuTablePdf(weekStart, type)
-      const label = type === 'children' ? '子供用' : '職員用'
-      const blob = new Blob([res.data], { type: 'application/pdf' })
-      const url = URL.createObjectURL(blob)
-      const w = window.open(url, '_blank')
-      if (w) {
-        w.onload = () => {
-          try {
-            w.print()
-          } catch {
-            /* 手動で印刷してもらう */
-          }
-        }
-      } else {
-        // ポップアップがブロックされた場合はダウンロードに切り替える
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `献立表_${label}_${weekStart}週.pdf`
-        a.click()
-      }
-      setTimeout(() => URL.revokeObjectURL(url), 30000)
-    } catch {
-      setNotice({ tone: 'error', text: '献立表を作成できませんでした。もう一度お試しください。' })
-    } finally {
-      setWeekDl((prev) => ({ ...prev, [key]: false }))
-    }
+  // 別タブを開くのをやめ、アプリ内のビューアで出す。
+  // 別タブはポップアップブロックに当たると黙ってダウンロードに変わるため、
+  // 印刷したつもりがフォルダに溜まる、という起き方をしていた。
+  const handleWeekPrint = (weekStart: string, type: 'staff' | 'children') => {
+    const label = type === 'children' ? '子供用' : '職員用'
+    return openPdf(
+      weekStart + type,
+      () => fetchMenuTablePdf(weekStart, type),
+      { title: `献立表（${label}）　${weekStart}の週`, fileName: `献立表_${label}_${weekStart}週.pdf` },
+      '献立表を作成できませんでした。もう一度お試しください。'
+    )
   }
 
   const handleMonthAiAdd = async () => {
@@ -373,6 +362,12 @@ export default function MenusPage() {
         </div>
       </div>
 
+      {pdfError && (
+        <p className="notice notice--error" role="alert">
+          {pdfError}
+        </p>
+      )}
+
       {notice && (
         <p
           className={
@@ -456,17 +451,17 @@ export default function MenusPage() {
                       type="button"
                       className="btn btn--sm"
                       onClick={() => handleWeekPrint(weekStart, 'staff')}
-                      disabled={!!weekDl[weekStart + 'staff']}
+                      disabled={pdfPendingKey !== null}
                     >
-                      職員用
+                      {pdfPendingKey === weekStart + 'staff' ? '作成中' : '職員用'}
                     </button>
                     <button
                       type="button"
                       className="btn btn--sm"
                       onClick={() => handleWeekPrint(weekStart, 'children')}
-                      disabled={!!weekDl[weekStart + 'children']}
+                      disabled={pdfPendingKey !== null}
                     >
-                      子供用
+                      {pdfPendingKey === weekStart + 'children' ? '作成中' : '子供用'}
                     </button>
                   </>
                 )}
@@ -479,6 +474,15 @@ export default function MenusPage() {
       <p className="muted" style={{ fontSize: 'var(--fs-sm)', margin: '0.5rem 0 0' }}>
         日付を押すと献立を編集できます。食札の数字は「献立を入れたブロック数 / 全ブロック数」です。
       </p>
+
+      {pdfDoc && (
+        <PdfViewerModal
+          url={pdfDoc.url}
+          fileName={pdfDoc.fileName}
+          title={pdfDoc.title}
+          onClose={closePdf}
+        />
+      )}
 
       {confirmMonthAi && (
         <ConfirmDialog
