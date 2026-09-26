@@ -26,6 +26,7 @@ import {
   type SupplierInput,
 } from '../_lib/api/client'
 import { todayStr, DOW_MON_FIRST } from '../_lib/date'
+import { useStringParam } from '../_lib/useUrlState'
 import ConfirmDialog from '../_components/ConfirmDialog'
 
 const getApiErrorMessage = (err: unknown, fallback: string): string => {
@@ -42,7 +43,11 @@ const TAB_LABELS: Record<Tab, string> = {
 }
 
 export default function MasterPage() {
-  const [tab, setTab] = useState<Tab>('rooms')
+  const [tabParam, setTabParam] = useStringParam('tab', 'rooms')
+  const tab: Tab = (['rooms', 'blocks', 'suppliers'] as string[]).includes(tabParam)
+    ? (tabParam as Tab)
+    : 'rooms'
+  const setTab = (next: Tab) => setTabParam(next)
 
   return (
     <div>

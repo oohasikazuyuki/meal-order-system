@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, Fragment } from 'react'
 import ConfirmDialog from '../_components/ConfirmDialog'
 import { useModal } from '../_lib/useModal'
+import { useStringParam } from '../_lib/useUrlState'
 import {
   fetchMenuMasters,
   createMenuMaster,
@@ -73,9 +74,14 @@ export default function MenuMasterPage() {
   const [editTarget, setEditTarget] = useState<MenuMaster | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [filterBlockId, setFilterBlockId] = useState<number | null | 'all'>('all')
-  const [filterCategory, setFilterCategory] = useState<string>('all')
+  const [searchQuery, setSearchQuery] = useStringParam('q')
+  // ブロックは 'all' / '共通'(=null) / ブロックID の3通り。URLには文字列で置く
+  const [blockParam, setBlockParam] = useStringParam('block', 'all')
+  const [filterCategory, setFilterCategory] = useStringParam('category', 'all')
+  const filterBlockId: number | null | 'all' =
+    blockParam === 'all' ? 'all' : blockParam === 'common' ? null : Number(blockParam)
+  const setFilterBlockId = (next: number | null | 'all') =>
+    setBlockParam(next === 'all' ? 'all' : next === null ? 'common' : String(next))
   const [showBulkModal, setShowBulkModal] = useState(false)
   const [openId, setOpenId] = useState<number | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<MenuMaster | null>(null)
