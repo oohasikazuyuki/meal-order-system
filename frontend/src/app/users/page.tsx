@@ -130,7 +130,7 @@ export default function UsersPage() {
           </div>
         ) : (
           <div className="sheet__scroll">
-            <table className="data">
+            <table className="data" aria-label="利用者の一覧">
               <thead>
                 <tr>
                   <th>名前</th>
@@ -171,13 +171,19 @@ export default function UsersPage() {
                     </td>
                     <td>
                       <div className="actions">
-                        <button type="button" className="btn btn--sm" onClick={() => openForm(user)}>
+                        <button
+                          type="button"
+                          className="btn btn--sm"
+                          onClick={() => openForm(user)}
+                          aria-label={`${user.name} を編集`}
+                        >
                           編集
                         </button>
                         <button
                           type="button"
                           className="btn btn--sm btn--danger"
                           onClick={() => setDeleteTarget(user)}
+                          aria-label={`${user.name} を削除`}
                         >
                           削除
                         </button>

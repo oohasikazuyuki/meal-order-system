@@ -173,7 +173,7 @@ export default function MenuTablePage() {
       )}
 
       {loading ? (
-        <p className="empty">読み込んでいます</p>
+        <p className="empty" role="status">読み込んでいます</p>
       ) : preview ? (
         <div style={{ overflowX: 'auto' }}>
           <div
