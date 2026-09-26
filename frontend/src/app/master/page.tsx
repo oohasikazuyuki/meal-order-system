@@ -27,6 +27,7 @@ import {
 } from '../_lib/api/client'
 import { todayStr, DOW_MON_FIRST } from '../_lib/date'
 import { useStringParam } from '../_lib/useUrlState'
+import ErrorNotice from '../_components/ErrorNotice'
 import ConfirmDialog from '../_components/ConfirmDialog'
 
 const getApiErrorMessage = (err: unknown, fallback: string): string => {
@@ -83,6 +84,7 @@ function RoomsTab() {
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
   const [mealCounts, setMealCounts] = useState<Record<string, number>>({})
   const [loadingMealCounts, setLoadingMealCounts] = useState(false)
@@ -93,11 +95,12 @@ function RoomsTab() {
 
   const loadRooms = useCallback(async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       const res = await fetchRooms()
       setRooms(res.data.rooms)
     } catch {
-      setError('部屋を読み込めませんでした。通信を確認して再読み込みしてください。')
+      setLoadError('部屋を読み込めませんでした。通信を確認してください。')
     } finally {
       setLoading(false)
     }
@@ -277,11 +280,8 @@ function RoomsTab() {
         </div>
       </section>
 
-      {error && (
-        <p className="notice notice--error" role="alert">
-          {error}
-        </p>
-      )}
+      {loadError && <ErrorNotice message={loadError} onRetry={loadRooms} busy={loading} />}
+      {error && <ErrorNotice message={error} />}
       {successMsg && <p className="notice notice--ok">{successMsg}</p>}
 
       <section className="sheet">
@@ -386,17 +386,19 @@ function BlocksTab() {
   const [room2Id, setRoom2Id] = useState<number>(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Block | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       const [roomsRes, blocksRes] = await Promise.all([fetchRooms(), fetchBlocks()])
       setRooms(roomsRes.data.rooms)
       setBlocks(blocksRes.data.blocks)
     } catch {
-      setError('ブロックを読み込めませんでした。通信を確認して再読み込みしてください。')
+      setLoadError('ブロックを読み込めませんでした。通信を確認してください。')
     } finally {
       setLoading(false)
     }
@@ -456,11 +458,8 @@ function BlocksTab() {
         />
       )}
 
-      {error && (
-        <p className="notice notice--error" role="alert">
-          {error}
-        </p>
-      )}
+      {loadError && <ErrorNotice message={loadError} onRetry={load} busy={loading} />}
+      {error && <ErrorNotice message={error} />}
       {successMsg && <p className="notice notice--ok">{successMsg}</p>}
 
       <section className="sheet">
@@ -844,6 +843,7 @@ function SuppliersTab() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [form, setForm] = useState<SupplierInput>({
@@ -864,11 +864,12 @@ function SuppliersTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       const res = await fetchSuppliers()
       setSuppliers(res.data.suppliers)
     } catch {
-      setError('仕入先を読み込めませんでした。通信を確認して再読み込みしてください。')
+      setLoadError('仕入先を読み込めませんでした。通信を確認してください。')
     } finally {
       setLoading(false)
     }
@@ -1023,11 +1024,8 @@ function SuppliersTab() {
       )}
 
       {successMsg && <p className="notice notice--ok">{successMsg}</p>}
-      {!showForm && error && (
-        <p className="notice notice--error" role="alert">
-          {error}
-        </p>
-      )}
+      {loadError && <ErrorNotice message={loadError} onRetry={load} busy={loading} />}
+      {!showForm && error && <ErrorNotice message={error} />}
 
       {showForm && (
         <section className="sheet">

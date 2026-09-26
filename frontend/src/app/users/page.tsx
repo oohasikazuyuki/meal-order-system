@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import ConfirmDialog from '../_components/ConfirmDialog'
+import ErrorNotice from '../_components/ErrorNotice'
 import {
   fetchUsers,
   createUser,
@@ -19,6 +20,7 @@ export default function UsersPage() {
   const [users, setUsers] = useState<UserRecord[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [editTarget, setEditTarget] = useState<UserRecord | null>(null)
@@ -27,11 +29,12 @@ export default function UsersPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       const res = await fetchUsers()
       setUsers(res.data.users)
     } catch {
-      setError('利用者一覧を読み込めませんでした。通信を確認して再読み込みしてください。')
+      setLoadError('利用者一覧を読み込めませんでした。通信を確認してください。')
     } finally {
       setLoading(false)
     }
@@ -87,11 +90,8 @@ export default function UsersPage() {
         />
       )}
 
-      {error && (
-        <p className="notice notice--error" role="alert">
-          {error}
-        </p>
-      )}
+      {loadError && <ErrorNotice message={loadError} onRetry={load} busy={loading} />}
+      {error && <ErrorNotice message={error} />}
       {successMsg && <p className="notice notice--ok">{successMsg}</p>}
 
       {showForm && (

@@ -26,6 +26,7 @@ import { useModal } from '../_lib/useModal'
 import { getHoliday } from '../_lib/holiday'
 import { usePdfDocument } from '../_lib/usePdfDocument'
 import { useMonthParam } from '../_lib/useUrlState'
+import ErrorNotice from '../_components/ErrorNotice'
 import PdfViewerModal from '../_components/PdfViewerModal'
 
 const MEAL_TYPES: MealType[] = [1, 2, 3, 4]
@@ -72,6 +73,7 @@ export default function MenusPage() {
   const [loading, setLoading] = useState(false)
   const [monthAiRunning, setMonthAiRunning] = useState(false)
   const [notice, setNotice] = useState<{ tone: 'ok' | 'error' | 'plain'; text: string } | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [modalDate, setModalDate] = useState<string | null>(null)
   const [copyOpen, setCopyOpen] = useState(false)
   const [copyRunning, setCopyRunning] = useState(false)
@@ -102,6 +104,7 @@ export default function MenusPage() {
 
   const load = useCallback(async (y: number, m: number): Promise<MenuItem[]> => {
     setLoading(true)
+    setLoadError(null)
     try {
       const [menusRes, bdRes] = await Promise.all([
         fetchMenusByMonth(y, m),
@@ -111,7 +114,7 @@ export default function MenusPage() {
       setBirthdayDates(new Set(bdRes.data.birthday_menu_dates.map(b => b.menu_date)))
       return menusRes.data.menus
     } catch {
-      setNotice({ tone: 'error', text: '献立を読み込めませんでした。通信を確認して再読み込みしてください。' })
+      setLoadError('献立を読み込めませんでした。通信を確認してください。')
       return []
     } finally {
       setLoading(false)
@@ -351,11 +354,11 @@ export default function MenusPage() {
         </div>
       </div>
 
-      {pdfError && (
-        <p className="notice notice--error" role="alert">
-          {pdfError}
-        </p>
+      {loadError && (
+        <ErrorNotice message={loadError} onRetry={() => load(year, month)} busy={loading} />
       )}
+
+      {pdfError && <ErrorNotice message={pdfError} />}
 
       {notice && (
         <p

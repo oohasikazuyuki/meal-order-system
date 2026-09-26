@@ -15,6 +15,7 @@ import { getHoliday } from '../_lib/holiday'
 import { usePdfDocument } from '../_lib/usePdfDocument'
 import { useWeekParam } from '../_lib/useUrlState'
 import WeekBar from '../_components/WeekBar'
+import ErrorNotice from '../_components/ErrorNotice'
 
 const PdfViewerModal = dynamic(() => import('../_components/PdfViewerModal'), { ssr: false })
 
@@ -51,17 +52,18 @@ export default function MenuTablePage() {
   const [weekStart, setWeekStart] = useWeekParam()
   const [preview, setPreview] = useState<MenuTableResponse | null>(null)
   const [loading, setLoading] = useState(false)
-  const { doc: pdfDoc, pendingKey, error, setError, open: openPdf, close: closePdf } = usePdfDocument()
+  const { doc: pdfDoc, pendingKey, error: pdfError, open: openPdf, close: closePdf } = usePdfDocument()
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [viewType, setViewType] = useState<ViewType>('staff')
 
   const loadPreview = useCallback(async (ws: string) => {
     setLoading(true)
-    setError(null)
+    setLoadError(null)
     try {
       const res = await fetchMenuTable(ws)
       setPreview(res.data)
     } catch {
-      setError('献立を読み込めませんでした。通信を確認して、もう一度お試しください。')
+      setLoadError('献立を読み込めませんでした。通信を確認してください。')
       setPreview(null)
     } finally {
       setLoading(false)
@@ -166,11 +168,15 @@ export default function MenuTablePage() {
         )}
       </div>
 
-      {error && (
-        <p className="notice notice--error" role="alert">
-          {error}
-        </p>
+      {loadError && (
+        <ErrorNotice
+          message={loadError}
+          onRetry={() => loadPreview(weekStart)}
+          busy={loading}
+        />
       )}
+
+      {pdfError && <ErrorNotice message={pdfError} />}
 
       {loading ? (
         <p className="empty">読み込んでいます</p>
