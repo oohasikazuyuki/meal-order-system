@@ -11,6 +11,7 @@ import {
 } from '../_lib/api/client'
 import { getMondayOf, addWeeks, addDays, todayStr, formatShort } from '../_lib/date'
 import WeekBar from '../_components/WeekBar'
+import ErrorNotice from '../_components/ErrorNotice'
 import { usePdfDocument } from '../_lib/usePdfDocument'
 import { useWeekParam } from '../_lib/useUrlState'
 
@@ -40,7 +41,7 @@ export default function OrderSheetsPage() {
       setPreview(previewRes.data)
       setInventory(invRes.data)
     } catch {
-      setError('食材の集計を取得できませんでした。通信を確認して、もう一度お試しください。')
+      setError('食材の集計を取得できませんでした。通信を確認してください。')
       setPreview(null)
       setInventory(null)
     } finally {
@@ -99,11 +100,11 @@ export default function OrderSheetsPage() {
         </p>
       </div>
 
-      {(error ?? pdfError) && (
-        <p className="notice notice--error" role="alert">
-          {error ?? pdfError}
-        </p>
+      {error && (
+        <ErrorNotice message={error} onRetry={() => loadPreview(weekStart)} busy={loading} />
       )}
+
+      {pdfError && <ErrorNotice message={pdfError} />}
 
       {loading ? (
         <p className="empty">集計しています</p>

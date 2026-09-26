@@ -1014,6 +1014,15 @@ input[type='number'] {
   background: var(--paper);
 }
 
+/* やり直しボタンを右端に置けるようにする。
+   文章だけ出して「もう一度お試しください」と書くのは、操作がないと意味がない */
+.notice--action {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
 .notice--error {
   border-left-color: var(--warn);
   background: var(--warn-bg);
