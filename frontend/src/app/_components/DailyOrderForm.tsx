@@ -16,6 +16,8 @@ import { getMondayOf, addWeeks, getWeekDates, formatShort, formatLong } from '..
 import { useWeekParam } from '../_lib/useUrlState'
 import WeekBar, { type DayState } from './WeekBar'
 import ConfirmDialog from './ConfirmDialog'
+import { usePdfDocument } from '../_lib/usePdfDocument'
+import PdfViewerModal from './PdfViewerModal'
 
 interface MealEdit {
   room1_kamaho_count: number
@@ -41,7 +43,13 @@ export default function DailyOrderForm() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [showPrintMenu, setShowPrintMenu] = useState(false)
-  const [downloading, setDownloading] = useState<number | null>(null)
+  const {
+    doc: pdfDoc,
+    pendingKey: pdfPendingKey,
+    error: pdfError,
+    open: openPdf,
+    close: closePdf,
+  } = usePdfDocument()
   // 未保存のまま移動しようとしたときに保留する操作
   const [pendingNav, setPendingNav] = useState<(() => void) | null>(null)
 
@@ -110,29 +118,18 @@ export default function DailyOrderForm() {
       .catch(() => {})
   }, [])
 
-  const handlePrintPdf = async (supplier: Supplier) => {
-    setDownloading(supplier.id)
+  // 別タブではなくアプリ内のビューアで出す。
+  // 別タブはポップアップブロックに当たると黙ってダウンロードに変わるため、
+  // 出したつもりがフォルダに溜まる、という起き方をしていた。
+  const handlePrintPdf = (supplier: Supplier) => {
     setShowPrintMenu(false)
-    setError(null)
-    try {
-      // days を空で送ると、バックエンドが対象週の食材をDBから取得する
-      const res = await fetchOrderSheetPdf(weekStart, supplier.id, {})
-      const blob = new Blob([res.data], { type: 'application/pdf' })
-      const url = URL.createObjectURL(blob)
-      const win = window.open(url, '_blank')
-      if (!win) {
-        // ポップアップがブロックされた場合はダウンロードに切り替える
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `${supplier.name}_${weekStart}週.pdf`
-        a.click()
-      }
-      setTimeout(() => URL.revokeObjectURL(url), 30000)
-    } catch {
-      setError(`${supplier.name}の発注書を作成できませんでした。もう一度お試しください。`)
-    } finally {
-      setDownloading(null)
-    }
+    // days を空で送ると、バックエンドが対象週の食材をDBから取得する
+    return openPdf(
+      String(supplier.id),
+      () => fetchOrderSheetPdf(weekStart, supplier.id, {}),
+      { title: `${supplier.name} 発注書`, fileName: `${supplier.name}_${weekStart}週.pdf` },
+      `${supplier.name}の発注書を作成できませんでした。もう一度お試しください。`
+    )
   }
 
   const updateEditState = (
@@ -299,10 +296,10 @@ export default function DailyOrderForm() {
                 type="button"
                 className="btn"
                 onClick={() => setShowPrintMenu((v) => !v)}
-                disabled={downloading !== null || suppliers.length === 0}
+                disabled={pdfPendingKey !== null || suppliers.length === 0}
                 aria-expanded={showPrintMenu}
               >
-                {downloading !== null ? '発注書を作成中' : '発注書を出す'}
+                {pdfPendingKey !== null ? '発注書を作成中' : '発注書を出す'}
               </button>
               {showPrintMenu && suppliers.length > 0 && (
                 <>
@@ -332,10 +329,19 @@ export default function DailyOrderForm() {
         }
       />
 
-      {error && (
+      {(error ?? pdfError) && (
         <p className="notice notice--error" role="alert">
-          {error}
+          {error ?? pdfError}
         </p>
+      )}
+
+      {pdfDoc && (
+        <PdfViewerModal
+          url={pdfDoc.url}
+          fileName={pdfDoc.fileName}
+          title={pdfDoc.title}
+          onClose={closePdf}
+        />
       )}
       {successMsg && <p className="notice notice--ok">{successMsg}</p>}
 
