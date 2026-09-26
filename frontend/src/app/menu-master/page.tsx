@@ -281,7 +281,7 @@ export default function MenuMasterPage() {
         </div>
 
         {loading ? (
-          <p className="empty">読み込んでいます</p>
+          <p className="empty" role="status">読み込んでいます</p>
         ) : filtered.length === 0 ? (
           <div className="empty">
             <p>
@@ -295,7 +295,7 @@ export default function MenuMasterPage() {
           </div>
         ) : (
           <div className="sheet__scroll">
-            <table className="data">
+            <table className="data" aria-label="メニューの一覧">
               <thead>
                 <tr>
                   <th>メニュー名</th>
@@ -338,6 +338,7 @@ export default function MenuMasterPage() {
                               type="button"
                               className="btn btn--sm"
                               aria-expanded={open}
+                              aria-label={`${m.name} の材料を${open ? '閉じる' : '見る'}`}
                               onClick={() => setOpenId(open ? null : m.id)}
                             >
                               {ings.length}品目
@@ -348,13 +349,19 @@ export default function MenuMasterPage() {
                         </td>
                         <td>
                           <div className="actions">
-                            <button type="button" className="btn btn--sm" onClick={() => openForm(m)}>
+                            <button
+                              type="button"
+                              className="btn btn--sm"
+                              onClick={() => openForm(m)}
+                              aria-label={`${m.name} を編集`}
+                            >
                               編集
                             </button>
                             <button
                               type="button"
                               className="btn btn--sm btn--danger"
                               onClick={() => setDeleteTarget(m)}
+                              aria-label={`${m.name} を削除`}
                             >
                               削除
                             </button>

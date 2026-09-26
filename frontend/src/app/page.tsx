@@ -86,6 +86,12 @@ export default function DashboardPage() {
             key={mt}
             className="mealband"
             data-meal={mt}
+            role="group"
+            aria-label={
+              loading
+                ? `${MEAL_TYPE_LABELS[mt]} 読み込み中`
+                : `${MEAL_TYPE_LABELS[mt]} ${totals[mt].menu ?? '献立が未設定'} ${totals[mt].count}食`
+            }
             style={{
               background: 'var(--paper)',
               borderTop: '1px solid var(--rule)',
@@ -138,7 +144,7 @@ export default function DashboardPage() {
         </div>
 
         {loading ? (
-          <p className="empty">読み込んでいます</p>
+          <p className="empty" role="status">読み込んでいます</p>
         ) : blocks.length === 0 ? (
           <div className="empty">
             <p>ブロックがまだ登録されていません。</p>
@@ -148,7 +154,7 @@ export default function DashboardPage() {
           </div>
         ) : (
           <div className="sheet__scroll">
-            <table className="data">
+            <table className="data" aria-label="ブロック別の入力状況">
               <thead>
                 <tr>
                   <th>ブロック</th>

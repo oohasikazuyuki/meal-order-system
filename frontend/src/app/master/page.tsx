@@ -319,7 +319,7 @@ function RoomsTab() {
         </div>
 
         {loading ? (
-          <p className="empty">読み込んでいます</p>
+          <p className="empty" role="status">読み込んでいます</p>
         ) : rooms.length === 0 ? (
           <div className="empty">
             <p>部屋がまだ登録されていません。</p>
@@ -329,7 +329,7 @@ function RoomsTab() {
           </div>
         ) : (
           <div className="sheet__scroll">
-            <table className="data">
+            <table className="data" aria-label="部屋の一覧">
               <thead>
                 <tr>
                   <th>部屋名</th>
@@ -358,6 +358,7 @@ function RoomsTab() {
                             type="button"
                             className="btn btn--sm btn--danger"
                             onClick={() => setDeleteTarget(room)}
+                            aria-label={`${room.name} を削除`}
                           >
                             削除
                           </button>
@@ -536,12 +537,12 @@ function BlocksTab() {
         </div>
 
         {loading ? (
-          <p className="empty">読み込んでいます</p>
+          <p className="empty" role="status">読み込んでいます</p>
         ) : blocks.length === 0 ? (
           <p className="empty">ブロックがまだありません。上のフォームから追加してください。</p>
         ) : (
           <div className="sheet__scroll">
-            <table className="data">
+            <table className="data" aria-label="ブロックの一覧">
               <thead>
                 <tr>
                   <th>ブロック名</th>
@@ -562,6 +563,7 @@ function BlocksTab() {
                           type="button"
                           className="btn btn--sm btn--danger"
                           onClick={() => setDeleteTarget(block)}
+                          aria-label={`${block.name} を削除`}
                         >
                           削除
                         </button>
@@ -1233,12 +1235,12 @@ function SuppliersTab() {
         </div>
 
         {loading ? (
-          <p className="empty">読み込んでいます</p>
+          <p className="empty" role="status">読み込んでいます</p>
         ) : suppliers.length === 0 ? (
           <p className="empty">仕入先がまだ登録されていません。</p>
         ) : (
           <div className="sheet__scroll">
-            <table className="data">
+            <table className="data" aria-label="仕入先の一覧">
               <thead>
                 <tr>
                   <th>名前</th>
@@ -1286,13 +1288,19 @@ function SuppliersTab() {
                     </td>
                     <td>
                       <div className="actions">
-                        <button type="button" className="btn btn--sm" onClick={() => handleEdit(s)}>
+                        <button
+                          type="button"
+                          className="btn btn--sm"
+                          onClick={() => handleEdit(s)}
+                          aria-label={`${s.name} を編集`}
+                        >
                           編集
                         </button>
                         <button
                           type="button"
                           className="btn btn--sm btn--danger"
                           onClick={() => setDeleteTarget(s)}
+                          aria-label={`${s.name} を削除`}
                         >
                           削除
                         </button>

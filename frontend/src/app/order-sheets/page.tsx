@@ -106,7 +106,7 @@ export default function OrderSheetsPage() {
       )}
 
       {loading ? (
-        <p className="empty">集計しています</p>
+        <p className="empty" role="status">集計しています</p>
       ) : !preview ? null : (
         <>
           {preview.suppliers.map((supplier) => {
@@ -131,6 +131,7 @@ export default function OrderSheetsPage() {
                       className="btn no-print"
                       onClick={() => handleDownload(supplier.supplier_id, supplier.supplier_name)}
                       disabled={pendingKey === String(supplier.supplier_id) || futureDates.length === 0}
+                      aria-label={`${supplier.supplier_name}の発注書を開く`}
                     >
                       {pendingKey === String(supplier.supplier_id) ? '作成しています' : '発注書を開く'}
                     </button>
