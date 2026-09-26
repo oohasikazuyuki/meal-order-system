@@ -11,16 +11,11 @@ import {
 } from '../_lib/api/client'
 import { getMondayOf, addWeeks, addDays, todayStr, formatShort } from '../_lib/date'
 import WeekBar from '../_components/WeekBar'
+import { usePdfDocument } from '../_lib/usePdfDocument'
 
 const PdfViewerModal = dynamic(() => import('../_components/PdfViewerModal'), { ssr: false })
 
 type Ingredient = { name: string; amount: number; unit: string }
-
-interface PdfModal {
-  url: string
-  supplierName: string
-  fileName: string
-}
 
 export default function OrderSheetsPage() {
   const [weekStart, setWeekStart] = useState<string>(() => getMondayOf(new Date()))
@@ -28,8 +23,7 @@ export default function OrderSheetsPage() {
   const [inventory, setInventory] = useState<InventoryPreviewResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [downloading, setDownloading] = useState<number | null>(null)
-  const [pdfModal, setPdfModal] = useState<PdfModal | null>(null)
+  const { doc: pdfDoc, pendingKey, error: pdfError, open: openPdf, close: closePdf } = usePdfDocument()
   const [today, setToday] = useState('')
 
   useEffect(() => setToday(todayStr()), [])
@@ -57,27 +51,13 @@ export default function OrderSheetsPage() {
     loadPreview(weekStart)
   }, [weekStart, loadPreview])
 
-  const closePdfModal = () => {
-    if (pdfModal) {
-      setTimeout(() => URL.revokeObjectURL(pdfModal.url), 1000)
-      setPdfModal(null)
-    }
-  }
-
-  const handleDownload = async (supplierId: number, supplierName: string) => {
-    setDownloading(supplierId)
-    setError(null)
-    try {
-      const res = await fetchOrderSheetPdf(weekStart, supplierId, {})
-      const blob = new Blob([res.data], { type: 'application/pdf' })
-      const url = URL.createObjectURL(blob)
-      setPdfModal({ url, supplierName, fileName: `${supplierName}_${weekStart}週.pdf` })
-    } catch {
-      setError(`${supplierName}の発注書を作成できませんでした。もう一度お試しください。`)
-    } finally {
-      setDownloading(null)
-    }
-  }
+  const handleDownload = (supplierId: number, supplierName: string) =>
+    openPdf(
+      String(supplierId),
+      () => fetchOrderSheetPdf(weekStart, supplierId, {}),
+      { title: `${supplierName} 発注書`, fileName: `${supplierName}_${weekStart}週.pdf` },
+      `${supplierName}の発注書を作成できませんでした。もう一度お試しください。`
+    )
 
   const week2Start = addWeeks(weekStart, 1)
   const isFutureOrToday = (dateStr: string) => !!today && dateStr >= today
@@ -92,12 +72,12 @@ export default function OrderSheetsPage() {
 
   return (
     <div>
-      {pdfModal && (
+      {pdfDoc && (
         <PdfViewerModal
-          url={pdfModal.url}
-          fileName={pdfModal.fileName}
-          title={`${pdfModal.supplierName} 発注書`}
-          onClose={closePdfModal}
+          url={pdfDoc.url}
+          fileName={pdfDoc.fileName}
+          title={pdfDoc.title}
+          onClose={closePdf}
         />
       )}
 
@@ -118,9 +98,9 @@ export default function OrderSheetsPage() {
         </p>
       </div>
 
-      {error && (
+      {(error ?? pdfError) && (
         <p className="notice notice--error" role="alert">
-          {error}
+          {error ?? pdfError}
         </p>
       )}
 
@@ -149,9 +129,9 @@ export default function OrderSheetsPage() {
                       type="button"
                       className="btn no-print"
                       onClick={() => handleDownload(supplier.supplier_id, supplier.supplier_name)}
-                      disabled={downloading === supplier.supplier_id || futureDates.length === 0}
+                      disabled={pendingKey === String(supplier.supplier_id) || futureDates.length === 0}
                     >
-                      {downloading === supplier.supplier_id ? '作成しています' : '発注書を開く'}
+                      {pendingKey === String(supplier.supplier_id) ? '作成しています' : '発注書を開く'}
                     </button>
                   </div>
                 </div>
