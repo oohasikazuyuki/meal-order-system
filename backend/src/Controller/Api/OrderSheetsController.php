@@ -1,6 +1,8 @@
 <?php
 namespace App\Controller\Api;
 
+use App\Service\DocumentExportException;
+use App\Service\DocumentExportService;
 use App\Controller\AppController;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use DateTime;
@@ -194,14 +196,7 @@ class OrderSheetsController extends AppController
             $this->sanitizeKawanoXlsx($tmpFile);
         }
 
-        while (ob_get_level() > 0) ob_end_clean();
-        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        header('Content-Disposition: attachment; filename*=UTF-8\'\'' . rawurlencode($filename));
-        header('Content-Length: ' . filesize($tmpFile));
-        header('Cache-Control: max-age=0, no-store');
-        readfile($tmpFile);
-        unlink($tmpFile);
-        exit;
+        (new DocumentExportService())->sendAsXlsx($tmpFile, $filename);
     }
 
     /** GET/POST /api/order-sheets/pdf */
@@ -219,34 +214,15 @@ class OrderSheetsController extends AppController
             $this->sanitizeKawanoXlsx($tmpXlsx);
         }
 
-        $outDir = sys_get_temp_dir();
-        $cmd    = sprintf(
-            'HOME=/tmp libreoffice --headless --convert-to pdf --outdir %s %s 2>&1',
-            escapeshellarg($outDir),
-            escapeshellarg($tmpXlsx)
-        );
-        exec($cmd, $cmdOutput, $exitCode);
-        @unlink($tmpXlsx);
-
-        $pdfFile = $outDir . '/' . basename($tmpXlsx, '.xlsx') . '.pdf';
-
-        if ($exitCode !== 0 || !file_exists($pdfFile)) {
-            $this->response = $this->response->withStatus(500);
-            $this->set(['ok' => false, 'message' => 'PDF変換に失敗しました: ' . implode(' ', $cmdOutput)]);
-            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
-            return;
-        }
-
         $filename = $supplier->name . '_' . $weekStart->format('Y-m-d') . '週.pdf';
 
-        while (ob_get_level() > 0) ob_end_clean();
-        header('Content-Type: application/pdf');
-        header('Content-Disposition: inline; filename*=UTF-8\'\'' . rawurlencode($filename));
-        header('Content-Length: ' . filesize($pdfFile));
-        header('Cache-Control: max-age=0, no-store');
-        readfile($pdfFile);
-        @unlink($pdfFile);
-        exit;
+        try {
+            (new DocumentExportService())->sendAsPdf($tmpXlsx, $filename);
+        } catch (DocumentExportException $e) {
+            $this->response = $this->response->withStatus(500);
+            $this->set(['ok' => false, 'message' => $e->getMessage()]);
+            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+        }
     }
 
     /**

@@ -12,6 +12,7 @@ import {
 } from '../_lib/api/client'
 import { getMondayOf, addWeeks, formatShort, DOW_MON_FIRST } from '../_lib/date'
 import { getHoliday } from '../_lib/holiday'
+import { usePdfDocument } from '../_lib/usePdfDocument'
 import WeekBar from '../_components/WeekBar'
 
 const PdfViewerModal = dynamic(() => import('../_components/PdfViewerModal'), { ssr: false })
@@ -49,10 +50,8 @@ export default function MenuTablePage() {
   const [weekStart, setWeekStart] = useState<string>(() => getMondayOf(new Date()))
   const [preview, setPreview] = useState<MenuTableResponse | null>(null)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [downloading, setDownloading] = useState<ViewType | null>(null)
+  const { doc: pdfDoc, pendingKey, error, setError, open: openPdf, close: closePdf } = usePdfDocument()
   const [viewType, setViewType] = useState<ViewType>('staff')
-  const [pdfModal, setPdfModal] = useState<{ url: string; label: string } | null>(null)
 
   const loadPreview = useCallback(async (ws: string) => {
     setLoading(true)
@@ -72,26 +71,14 @@ export default function MenuTablePage() {
     loadPreview(weekStart)
   }, [weekStart, loadPreview])
 
-  const closePdfModal = () => {
-    if (pdfModal) {
-      setTimeout(() => URL.revokeObjectURL(pdfModal.url), 1000)
-      setPdfModal(null)
-    }
-  }
-
-  const handlePrint = async (type: ViewType) => {
-    setDownloading(type)
-    setError(null)
-    try {
-      const res = await fetchMenuTablePdf(weekStart, type)
-      const label = type === 'children' ? '子供用' : '職員用'
-      const blob = new Blob([res.data], { type: 'application/pdf' })
-      setPdfModal({ url: URL.createObjectURL(blob), label })
-    } catch {
-      setError('献立表を作成できませんでした。もう一度お試しください。')
-    } finally {
-      setDownloading(null)
-    }
+  const handlePrint = (type: ViewType) => {
+    const label = type === 'children' ? '子供用' : '職員用'
+    return openPdf(
+      type,
+      () => fetchMenuTablePdf(weekStart, type),
+      { title: `献立表（${label}）`, fileName: `献立表_${label}_${weekStart}週.pdf` },
+      '献立表を作成できませんでした。もう一度お試しください。'
+    )
   }
 
   const menuCountOn = (ds: string) => {
@@ -102,12 +89,12 @@ export default function MenuTablePage() {
 
   return (
     <div>
-      {pdfModal && (
+      {pdfDoc && (
         <PdfViewerModal
-          url={pdfModal.url}
-          fileName={`献立表_${pdfModal.label}_${weekStart}週.pdf`}
-          title={`献立表（${pdfModal.label}）`}
-          onClose={closePdfModal}
+          url={pdfDoc.url}
+          fileName={pdfDoc.fileName}
+          title={pdfDoc.title}
+          onClose={closePdf}
         />
       )}
 
@@ -125,17 +112,17 @@ export default function MenuTablePage() {
               type="button"
               className="btn btn--primary"
               onClick={() => handlePrint('staff')}
-              disabled={downloading !== null || !preview}
+              disabled={pendingKey !== null || !preview}
             >
-              {downloading === 'staff' ? '作成しています' : '職員用を印刷'}
+              {pendingKey === 'staff' ? '作成しています' : '職員用を印刷'}
             </button>
             <button
               type="button"
               className="btn"
               onClick={() => handlePrint('children')}
-              disabled={downloading !== null || !preview}
+              disabled={pendingKey !== null || !preview}
             >
-              {downloading === 'children' ? '作成しています' : '子供用を印刷'}
+              {pendingKey === 'children' ? '作成しています' : '子供用を印刷'}
             </button>
           </>
         }

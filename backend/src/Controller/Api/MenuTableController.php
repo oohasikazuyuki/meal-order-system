@@ -2,6 +2,8 @@
 namespace App\Controller\Api;
 
 use App\Controller\AppController;
+use App\Service\DocumentExportException;
+use App\Service\DocumentExportService;
 use App\Utility\JapaneseHoliday;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use ZipArchive;
@@ -96,14 +98,7 @@ class MenuTableController extends AppController
         $filename  = "献立表_{$typeLabel}_{$weekStart->format('Y-m-d')}週.xlsx";
         $tmpFile = $this->buildMenuTableXlsx($weekStart, $type, $weekData, $weekEnd);
 
-        while (ob_get_level() > 0) ob_end_clean();
-        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        header('Content-Disposition: attachment; filename*=UTF-8\'\'' . rawurlencode($filename));
-        header('Content-Length: ' . filesize($tmpFile));
-        header('Cache-Control: max-age=0, no-store');
-        readfile($tmpFile);
-        unlink($tmpFile);
-        exit;
+        (new DocumentExportService())->sendAsXlsx($tmpFile, $filename);
     }
 
     // ----------------------------------------
@@ -129,35 +124,18 @@ class MenuTableController extends AppController
         $filename  = "献立表_{$typeLabel}_{$weekStart->format('Y-m-d')}週.pdf";
         $tmpXlsx   = $this->buildMenuTableXlsx($weekStart, $type, $weekData, $weekEnd);
 
-        $outDir = sys_get_temp_dir();
+        // 子供用は1枚に収める。職員用は元の紙と同じ複数ページで出す
         $pdfFilter = $type === 'children'
             ? 'pdf:calc_pdf_Export:{"SinglePageSheets":{"type":"boolean","value":"true"}}'
             : 'pdf';
-        $cmd = sprintf(
-            'HOME=/tmp libreoffice --headless --convert-to %s --outdir %s %s 2>&1',
-            escapeshellarg($pdfFilter),
-            escapeshellarg($outDir),
-            escapeshellarg($tmpXlsx)
-        );
-        exec($cmd, $cmdOutput, $exitCode);
-        @unlink($tmpXlsx);
 
-        $pdfFile = $outDir . '/' . basename($tmpXlsx, '.xlsx') . '.pdf';
-        if ($exitCode !== 0 || !file_exists($pdfFile)) {
+        try {
+            (new DocumentExportService())->sendAsPdf($tmpXlsx, $filename, $pdfFilter);
+        } catch (DocumentExportException $e) {
             $this->response = $this->response->withStatus(500);
-            $this->set(['ok' => false, 'message' => 'PDF変換に失敗しました: ' . implode(' ', $cmdOutput)]);
+            $this->set(['ok' => false, 'message' => $e->getMessage()]);
             $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
-            return;
         }
-
-        while (ob_get_level() > 0) ob_end_clean();
-        header('Content-Type: application/pdf');
-        header('Content-Disposition: inline; filename*=UTF-8\'\'' . rawurlencode($filename));
-        header('Content-Length: ' . filesize($pdfFile));
-        header('Cache-Control: max-age=0, no-store');
-        readfile($pdfFile);
-        @unlink($pdfFile);
-        exit;
     }
 
     private function buildMenuTableXlsx(DateTime $weekStart, string $type, array $weekData, DateTime $weekEnd): string
