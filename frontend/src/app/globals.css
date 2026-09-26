@@ -689,6 +689,17 @@ input[type='number'] {
    名前は折り返し、数量は右端で桁を揃え、記号や納品日は次の行に送る
    ========================================================================== */
 
+/* 材料が未登録の献立。黙って空白にせず、登録漏れだと分かるようにする */
+.ingline__missing {
+  margin: 0.15rem 0 0;
+  font-size: var(--fs-xs);
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-radius: 2px;
+  padding: 0.1rem 0.35rem;
+  display: inline-block;
+}
+
 .ingline {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

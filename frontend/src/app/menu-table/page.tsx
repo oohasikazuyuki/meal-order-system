@@ -321,6 +321,16 @@ function MealBlock({
               {menu.menu_name}
             </p>
 
+            {/* 材料が1件もない献立は、名前だけが並んで数量が消えたように見える。
+                「材料が要らない献立」なのか「登録し忘れ」なのか区別が付かないので、
+                未登録であることをその場に出す。黙って空白にすると、
+                厨房に渡ったあとで気づくことになる */}
+            {viewType === 'staff' &&
+              !menu.menu_name.startsWith('外食') &&
+              menu.ingredients.length === 0 && (
+                <p className="ingline__missing">材料が未登録</p>
+              )}
+
             {viewType === 'staff' &&
               !menu.menu_name.startsWith('外食') &&
               menu.ingredients.map((ing, ii) => {
