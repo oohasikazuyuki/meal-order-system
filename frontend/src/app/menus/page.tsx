@@ -25,6 +25,7 @@ import ConfirmDialog from '../_components/ConfirmDialog'
 import { useModal } from '../_lib/useModal'
 import { getHoliday } from '../_lib/holiday'
 import { usePdfDocument } from '../_lib/usePdfDocument'
+import { useMonthParam } from '../_lib/useUrlState'
 import PdfViewerModal from '../_components/PdfViewerModal'
 
 const MEAL_TYPES: MealType[] = [1, 2, 3, 4]
@@ -63,8 +64,7 @@ export default function MenusPage() {
   const [today] = useState(() => new Date())
   const [todayIso, setTodayIso] = useState('')
 
-  const [year, setYear] = useState(today.getFullYear())
-  const [month, setMonth] = useState(today.getMonth() + 1)
+  const [{ year, month }, setYearMonth] = useMonthParam()
   const [menus, setMenus] = useState<MenuItem[]>([])
   const [blocks, setBlocks] = useState<Block[]>([])
   const [masters, setMasters] = useState<MenuMaster[]>([])
@@ -130,22 +130,11 @@ export default function MenusPage() {
     ]).catch(() => {})
   }, [])
 
-  const goPrev = () => {
-    if (month === 1) {
-      setYear((y) => y - 1)
-      setMonth(12)
-    } else setMonth((m) => m - 1)
-  }
-  const goNext = () => {
-    if (month === 12) {
-      setYear((y) => y + 1)
-      setMonth(1)
-    } else setMonth((m) => m + 1)
-  }
-  const goThisMonth = () => {
-    setYear(today.getFullYear())
-    setMonth(today.getMonth() + 1)
-  }
+  const goPrev = () =>
+    month === 1 ? setYearMonth(year - 1, 12) : setYearMonth(year, month - 1)
+  const goNext = () =>
+    month === 12 ? setYearMonth(year + 1, 1) : setYearMonth(year, month + 1)
+  const goThisMonth = () => setYearMonth(today.getFullYear(), today.getMonth() + 1)
 
   const menusForDate = (dateStr: string) => menus.filter((m) => m.menu_date === dateStr)
   const weeks = buildCalendar(year, month)

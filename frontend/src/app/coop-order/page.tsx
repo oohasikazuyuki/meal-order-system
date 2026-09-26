@@ -6,6 +6,7 @@ import { getMondayOf, addWeeks, getWeekDates, parseDateStr, DOW_MON_FIRST } from
 import WeekBar from '../_components/WeekBar'
 import CoopOrderListModal from './CoopOrderListModal'
 import { buildOrderLines } from '../_lib/coopOrderList'
+import { useWeekParam } from '../_lib/useUrlState'
 
 type EditState = Record<
   number,
@@ -18,7 +19,7 @@ type EditState = Record<
 >
 
 export default function CoopOrderPage() {
-  const [weekStart, setWeekStart] = useState<string>(() => getMondayOf(new Date()))
+  const [weekStart, setWeekStart] = useWeekParam()
   const [data, setData] = useState<CoopOrdersResponse | null>(null)
   const [editState, setEditState] = useState<EditState>({})
   const [loading, setLoading] = useState(false)

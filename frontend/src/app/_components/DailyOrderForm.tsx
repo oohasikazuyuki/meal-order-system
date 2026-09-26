@@ -13,6 +13,7 @@ import {
   type Supplier,
 } from '../_lib/api/client'
 import { getMondayOf, addWeeks, getWeekDates, formatShort, formatLong } from '../_lib/date'
+import { useWeekParam } from '../_lib/useUrlState'
 import WeekBar, { type DayState } from './WeekBar'
 import ConfirmDialog from './ConfirmDialog'
 import { usePdfDocument } from '../_lib/usePdfDocument'
@@ -32,7 +33,7 @@ type WeekData = { [dateStr: string]: BlockWithQuantities[] }
 type WeekEditState = { [dateStr: string]: DayEditState }
 
 export default function DailyOrderForm() {
-  const [weekStart, setWeekStart] = useState<string>(() => getMondayOf(new Date()))
+  const [weekStart, setWeekStart] = useWeekParam()
   const [activeDay, setActiveDay] = useState<number>(0)
   const [weekData, setWeekData] = useState<WeekData>({})
   const [weekEditState, setWeekEditState] = useState<WeekEditState>({})
