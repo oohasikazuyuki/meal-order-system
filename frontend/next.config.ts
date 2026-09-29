@@ -1,6 +1,10 @@
 import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
+  // サーバーに載せるときは実行に必要なファイルだけをまとめる。
+  // node_modules を丸ごと持っていくとイメージが1.6GBになり、
+  // メモリ1GBの機械には重すぎる
+  output: 'standalone',
   // パフォーマンス最適化
   compiler: {
     removeConsole: process.env.NODE_ENV === 'production',
