@@ -1,0 +1,30 @@
+# 本番／Dev環境用。開発用と違い、ソースをイメージに焼いて next start で動かす。
+# 開発用は npm run dev + バインドマウントなので、サーバーには載せられない。
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json* frontend/.npmrc ./
+RUN npm ci
+
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY frontend/ ./
+# NEXT_PUBLIC_* はビルド時に埋め込まれる。実行時の環境変数では変えられない
+ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_AI_PUBLIC_ENABLED=false
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_AI_PUBLIC_ENABLED=$NEXT_PUBLIC_AI_PUBLIC_ENABLED
+RUN npm run build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+# root で動かす必要はない
+RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+USER nextjs
+EXPOSE 3000
+CMD ["npm", "run", "start"]
