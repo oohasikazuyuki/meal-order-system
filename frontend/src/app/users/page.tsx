@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import ConfirmDialog from '../_components/ConfirmDialog'
 import { generatePassword, validateLoginId } from '../_lib/password'
+import { useModal } from '../_lib/useModal'
 import {
   fetchUsers,
   createUser,
@@ -272,6 +273,8 @@ function UserForm({
   const [error, setError] = useState<string | null>(null)
   // 伏せ字のままだと打ち間違いに気づけない。相手に伝える必要もある
   const [showPassword, setShowPassword] = useState(false)
+  // 開いたらフォーカスを中へ、Escape で閉じる、背面はスクロールさせない
+  const closeRef = useModal(onCancel)
 
   const trimmedId = loginId.trim()
   const loginIdError =
@@ -325,12 +328,35 @@ function UserForm({
   }
 
   return (
-    <form className="sheet" onSubmit={handleSubmit}>
-      <div className="sheet__head">
-        <h3>{isEdit ? `${initial!.name} を編集` : '利用者を追加'}</h3>
+    <div
+      className="backdrop"
+      onMouseDown={(e) => {
+        // 書きかけを背景クリックで消さない。閉じるのは「やめる」と Escape だけ
+        if (e.target === e.currentTarget) e.preventDefault()
+      }}
+    >
+      <form
+        className="modal"
+        style={{ maxWidth: 820 }}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="userform-title"
+        onSubmit={handleSubmit}
+      >
+      <div className="modal__head">
+        <h3 id="userform-title">{isEdit ? `${initial!.name} を編集` : '利用者を追加'}</h3>
+        <button
+          type="button"
+          className="btn btn--sm"
+          ref={closeRef}
+          onClick={onCancel}
+          style={{ marginLeft: 'auto' }}
+        >
+          閉じる
+        </button>
       </div>
 
-      <div className="sheet__body">
+      <div className="modal__body">
         {error && (
           <p className="notice notice--error" role="alert">
             {error}
@@ -535,6 +561,7 @@ function UserForm({
           {saving ? '保存しています' : isEdit ? '更新する' : '追加する'}
         </button>
       </div>
-    </form>
+      </form>
+    </div>
   )
 }
