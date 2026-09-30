@@ -1,6 +1,5 @@
-import type { NextConfig } from 'next'
-
-const nextConfig: NextConfig = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
   // パフォーマンス最適化
   compiler: {
     removeConsole: process.env.NODE_ENV === 'production',
