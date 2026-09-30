@@ -87,6 +87,12 @@ jobs:
           sudo docker tag  ${{ env.IMAGE_PREFIX }}/frontend:dev meal-dev-frontend:amd64
 
           sudo docker compose up -d
+
+          # up -d は中身の変わったコンテナしか作り直さないので nginx は据え置かれる。
+          # だが backend/frontend は作り直されて別IPになり、nginx は起動時に
+          # 解決した古いIPを掴んだままになる（= APIが502のまま）。
+          sudo docker compose restart nginx
+
           sudo docker compose exec -T backend php migrate.php
 
           # 入れ替え前の古いイメージがディスクに溜まる。48GBしかない
