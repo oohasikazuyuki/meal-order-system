@@ -270,103 +270,150 @@ function UserForm({
           </p>
         )}
 
-        <div className="grid2">
-          <label className="field">
-            <span>名前</span>
-            <input
-              className="input"
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              autoFocus
-              required
-            />
-          </label>
-
-          <label className="field">
-            <span>ログインID</span>
-            <input
-              className="input"
-              type="text"
-              value={loginId}
-              onChange={(e) => setLoginId(e.target.value)}
-              autoComplete="username"
-              required
-            />
-          </label>
-
-          <label className="field">
-            <span>
-              パスワード
-              {isEdit && <span className="field__hint">空欄のままなら変更しません</span>}
-            </span>
-            <input
-              className="input"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="new-password"
-            />
-          </label>
-
-          <label className="field">
-            <span>権限</span>
-            <select
-              className="select"
-              value={role}
-              onChange={(e) => {
-                setRole(e.target.value as 'admin' | 'user')
-                if (e.target.value === 'admin') setBlockId(null)
-              }}
-            >
-              <option value="user">一般</option>
-              <option value="admin">管理者</option>
-            </select>
-          </label>
-
-          <label className="field">
-            <span>鎌倉連携ID</span>
-            <input
-              className="input"
-              type="text"
-              value={kamahoLoginId}
-              onChange={(e) => setKamahoLoginId(e.target.value)}
-              autoComplete="username"
-            />
-          </label>
-
-          <label className="field">
-            <span>
-              鎌倉連携パスワード
-              <span className="field__hint">空欄のままなら変更しません</span>
-            </span>
-            <input
-              className="input"
-              type="password"
-              value={kamahoPassword}
-              onChange={(e) => setKamahoPassword(e.target.value)}
-              autoComplete="new-password"
-            />
-          </label>
-
-          {role === 'user' && (
+        {/* 7項目を平らに並べると、必須の項目と任意の連携設定が同じ重さに見える。
+            意味のまとまりで区切り、任意のものは最後に畳んでおく */}
+        <fieldset className="formgroup">
+          <legend>この人の情報</legend>
+          <div className="grid2">
             <label className="field">
-              <span>担当ブロック</span>
+              <span>
+                名前 <span className="field__req">必須</span>
+              </span>
+              <input
+                className="input"
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="例: 高橋 直子"
+                autoFocus
+                required
+              />
+            </label>
+
+            <label className="field">
+              <span>
+                ログインID <span className="field__req">必須</span>
+              </span>
+              <input
+                className="input"
+                type="text"
+                value={loginId}
+                onChange={(e) => setLoginId(e.target.value)}
+                placeholder="例: takahashi"
+                autoComplete="username"
+                required
+              />
+            </label>
+
+            <label className="field">
+              <span>
+                パスワード{' '}
+                {isEdit ? (
+                  <span className="field__hint">空欄のままなら変更しません</span>
+                ) : (
+                  <span className="field__req">必須</span>
+                )}
+              </span>
+              <input
+                className="input"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="new-password"
+                aria-describedby="pw-hint"
+              />
+              <span className="field__hint" id="pw-hint">
+                8文字以上を推奨します
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset className="formgroup">
+          <legend>この人ができること</legend>
+          <div className="grid2">
+            <label className="field">
+              <span>権限</span>
               <select
                 className="select"
-                value={blockId ?? ''}
-                onChange={(e) => setBlockId(e.target.value ? Number(e.target.value) : null)}
+                value={role}
+                onChange={(e) => {
+                  setRole(e.target.value as 'admin' | 'user')
+                  if (e.target.value === 'admin') setBlockId(null)
+                }}
+                aria-describedby="role-hint"
               >
-                <option value="">未割当</option>
-                {blocks.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
+                <option value="user">一般</option>
+                <option value="admin">管理者</option>
               </select>
+              <span className="field__hint" id="role-hint">
+                {role === 'admin'
+                  ? '全ブロックの食数と献立、利用者の登録まで扱えます'
+                  : '担当ブロックの食数と献立だけを扱えます'}
+              </span>
             </label>
-          )}
-        </div>
+
+            {/* 管理者は全ブロックを見るので、担当を決める意味がない */}
+            {role === 'user' && (
+              <label className="field">
+                <span>担当ブロック</span>
+                <select
+                  className="select"
+                  value={blockId ?? ''}
+                  onChange={(e) => setBlockId(e.target.value ? Number(e.target.value) : null)}
+                  aria-describedby="block-hint"
+                >
+                  <option value="">未割当</option>
+                  {blocks.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+                <span className="field__hint" id="block-hint">
+                  未割当のままだと、食数の入力画面に何も出ません
+                </span>
+              </label>
+            )}
+          </div>
+        </fieldset>
+
+        {/* 連携を使わない人のほうが多い。既定では畳んでおく */}
+        <details className="formgroup formgroup--optional" open={!!kamahoLoginId}>
+          <summary>
+            食数管理システムとの連携
+            <span className="field__hint">任意・あとから設定できます</span>
+          </summary>
+          <p className="muted" style={{ margin: '0.4rem 0 0.8rem', fontSize: 'var(--fs-sm)' }}>
+            設定すると、この人がログインしているときの食数の取得に、この連携情報を使います。
+          </p>
+          <div className="grid2">
+            <label className="field">
+              <span>連携ログインID</span>
+              <input
+                className="input"
+                type="text"
+                value={kamahoLoginId}
+                onChange={(e) => setKamahoLoginId(e.target.value)}
+                autoComplete="off"
+              />
+            </label>
+
+            <label className="field">
+              <span>
+                連携パスワード{' '}
+                {isEdit && <span className="field__hint">空欄のままなら変更しません</span>}
+              </span>
+              <input
+                className="input"
+                type="password"
+                value={kamahoPassword}
+                onChange={(e) => setKamahoPassword(e.target.value)}
+                autoComplete="new-password"
+              />
+            </label>
+          </div>
+        </details>
       </div>
 
       <div className="modal__foot">
