@@ -1,0 +1,26 @@
+# 本番／Dev環境用。開発用との違いはソースをイメージに焼くところ。
+FROM php:8.5-fpm
+
+RUN apt-get update && apt-get install -y \
+    git curl unzip libpng-dev libonig-dev libxml2-dev libicu-dev \
+    libzip-dev libfreetype6-dev libjpeg62-turbo-dev \
+    && docker-php-ext-install pdo pdo_mysql mbstring intl zip \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install gd \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# LibreOffice（Excel→PDF変換）＋日本語フォント。
+# これが無いと献立表と発注書のPDFが出せない
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libreoffice-calc \
+    fonts-noto-cjk \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+COPY docker/php/php.ini /usr/local/etc/php/conf.d/custom.ini
+
+WORKDIR /var/www/html
+COPY backend/ /var/www/html/
+RUN composer install --no-interaction --no-dev --optimize-autoloader \
+    && mkdir -p tmp/cache/models tmp/cache/persistent logs \
+    && chown -R www-data:www-data tmp logs
