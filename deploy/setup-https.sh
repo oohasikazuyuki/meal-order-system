@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# ドメインを当てて HTTPS にする。サーバー上で実行する。
+#
+#   DOMAIN=dev-hatchu.kamaho-shokusu.jp EMAIL=you@example.com ./setup-https.sh
+#
+# 前提: そのドメインのAレコードがこのサーバーのIPを指していること。
+#       指していないと Let's Encrypt の確認が通らない。
+set -euo pipefail
+
+DOMAIN="${DOMAIN:?DOMAIN を指定してください}"
+EMAIL="${EMAIL:?EMAIL を指定してください（証明書の期限通知先）}"
+APP_DIR="${APP_DIR:-$HOME/meal-order}"
+
+cd "$APP_DIR"
+
+echo "==> DNS を確認"
+resolved=$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1 || true)
+myip=$(curl -s --max-time 10 https://checkip.amazonaws.com || true)
+echo "    $DOMAIN -> ${resolved:-未解決}"
+echo "    このサーバー -> ${myip:-不明}"
+if [ -z "$resolved" ]; then
+  echo "!!  DNSが未反映です。Aレコードを追加して、反映を待ってから実行してください。"
+  exit 1
+fi
+if [ -n "$myip" ] && [ "$resolved" != "$myip" ]; then
+  echo "!!  DNSの向き先がこのサーバーと違います。証明書の取得に失敗します。"
+  exit 1
+fi
+
+echo "==> certbot を導入"
+sudo apt-get update -qq
+sudo apt-get install -y -qq certbot >/dev/null
+
+echo "==> 証明書を取得（取得中だけ80番を空ける）"
+sudo mkdir -p /var/www/certbot
+# nginx コンテナを一旦止めて standalone で取る。
+# webroot 方式にするには先にHTTPS設定が要り、鶏と卵になるため
+sudo docker compose stop nginx
+sudo certbot certonly --standalone \
+  -d "$DOMAIN" \
+  --non-interactive --agree-tos -m "$EMAIL" \
+  --keep-until-expiring
+
+echo "==> nginx の設定を HTTPS 用に差し替え"
+sed "s|\${DOMAIN}|$DOMAIN|g" docker/nginx/prod-ssl.conf.template > docker/nginx/active.conf
+
+echo "==> compose に証明書と443番を追加"
+python3 - "$DOMAIN" <<'PY'
+import sys, re, pathlib
+p = pathlib.Path('docker-compose.yml')
+s = p.read_text()
+if '443:443' not in s:
+    s = s.replace('      - "80:80"', '      - "80:80"\n      - "443:443"', 1)
+if 'letsencrypt' not in s:
+    s = s.replace(
+        '      - ./docker/nginx/prod.conf:/etc/nginx/conf.d/default.conf:ro',
+        '      - ./docker/nginx/active.conf:/etc/nginx/conf.d/default.conf:ro\n'
+        '      - /etc/letsencrypt:/etc/letsencrypt:ro\n'
+        '      - /var/www/certbot:/var/www/certbot:ro', 1)
+p.write_text(s)
+print('    compose を更新')
+PY
+
+echo "==> 起動"
+sudo docker compose up -d nginx
+
+echo "==> 自動更新を仕込む"
+# 更新後に nginx を読み直さないと、古い証明書を掴んだままになる
+sudo tee /etc/cron.d/certbot-renew >/dev/null <<CRON
+0 4 * * * root certbot renew --quiet --pre-hook "cd $APP_DIR && docker compose stop nginx" --post-hook "cd $APP_DIR && docker compose start nginx"
+CRON
+
+echo
+echo "完了: https://$DOMAIN"
+echo "※ フロントは NEXT_PUBLIC_API_URL をビルド時に埋め込むため、"
+echo "   https のURLで作り直す必要があります（手元で --build）。"
