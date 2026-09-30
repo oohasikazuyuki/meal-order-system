@@ -20,3 +20,16 @@ frontend/.next
 .idea
 /frontend/node_modules/
 /backend/.phpunit.cache/test-results
+
+# ビルドの中間ファイル（毎回差分に出るだけで、中身に意味がない）
+*.tsbuildinfo
+
+# Terraform の作業ディレクトリ。プロバイダのバイナリが 250MB あり、
+# tfvars/tfplan には OCID や鍵のパスが入るので置かない
+infra/**/.terraform/
+infra/**/.terraform.lock.hcl
+infra/**/*.tfstate
+infra/**/*.tfstate.*
+infra/**/*.tfplan
+infra/**/*.tfvars
+infra/**/*.tfvars.json
