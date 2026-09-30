@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import ConfirmDialog from '../_components/ConfirmDialog'
+import { generatePassword, validateLoginId } from '../_lib/password'
 import {
   fetchUsers,
   createUser,
@@ -20,6 +21,9 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+  // 作ったあと、本人にIDとパスワードを伝える必要がある。
+  // 画面を閉じると二度と確認できないので、その場で控えられるようにする
+  const [handover, setHandover] = useState<{ name: string; loginId: string; password: string } | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [editTarget, setEditTarget] = useState<UserRecord | null>(null)
   const [blocks, setBlocks] = useState<Block[]>([])
@@ -60,8 +64,12 @@ export default function UsersPage() {
     }
   }
 
-  const handleFormSuccess = (msg: string) => {
+  const handleFormSuccess = (
+    msg: string,
+    created?: { name: string; loginId: string; password: string }
+  ) => {
     setSuccessMsg(msg)
+    setHandover(created ?? null)
     setShowForm(false)
     setEditTarget(null)
     load()
@@ -92,12 +100,55 @@ export default function UsersPage() {
           {error}
         </p>
       )}
-      {successMsg && <p className="notice notice--ok">{successMsg}</p>}
+      {successMsg && !handover && <p className="notice notice--ok">{successMsg}</p>}
+
+      {/* パスワードはハッシュ化して保存するので、この画面を離れると二度と見られない。
+          本人に伝えるまでの間だけ、その場に出しておく */}
+      {handover && (
+        <section className="sheet handover">
+          <div className="sheet__head">
+            <h2>「{handover.name}」を追加しました</h2>
+          </div>
+          <div className="sheet__body">
+            <p style={{ margin: '0 0 0.7rem' }}>
+              本人に下の2つを伝えてください。
+              <strong>この画面を閉じると、パスワードは二度と確認できません。</strong>
+            </p>
+            <dl className="handover__list">
+              <dt>ログインID</dt>
+              <dd className="num">{handover.loginId}</dd>
+              <dt>パスワード</dt>
+              <dd className="num">{handover.password}</dd>
+            </dl>
+          </div>
+          <div className="modal__foot">
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                navigator.clipboard
+                  ?.writeText(
+                    `食数発注システム\nログインID: ${handover.loginId}\nパスワード: ${handover.password}`
+                  )
+                  .catch(() => {})
+              }}
+            >
+              コピーする
+            </button>
+            <button type="button" className="btn btn--primary" onClick={() => setHandover(null)}>
+              伝えたので閉じる
+            </button>
+          </div>
+        </section>
+      )}
 
       {showForm && (
         <UserForm
           initial={editTarget}
           blocks={blocks}
+          takenLoginIds={users
+            .filter((u) => u.id !== editTarget?.id)
+            .map((u) => u.login_id)}
           onSuccess={handleFormSuccess}
           onCancel={() => {
             setShowForm(false)
@@ -197,12 +248,16 @@ export default function UsersPage() {
 function UserForm({
   initial,
   blocks,
+  takenLoginIds,
   onSuccess,
   onCancel,
 }: {
   initial: UserRecord | null
   blocks: Block[]
-  onSuccess: (msg: string) => void
+  /** 既に使われているログインID。送信前に気づけるようにする */
+  takenLoginIds: string[]
+  /** 追加したときは、本人に伝えるための認証情報も返す */
+  onSuccess: (msg: string, created?: { name: string; loginId: string; password: string }) => void
   onCancel: () => void
 }) {
   const isEdit = !!initial
@@ -215,6 +270,14 @@ function UserForm({
   const [blockId, setBlockId] = useState<number | null>(initial?.block_id ?? null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 伏せ字のままだと打ち間違いに気づけない。相手に伝える必要もある
+  const [showPassword, setShowPassword] = useState(false)
+
+  const trimmedId = loginId.trim()
+  const loginIdError =
+    validateLoginId(trimmedId) ??
+    (takenLoginIds.includes(trimmedId) ? 'このログインIDはすでに使われています' : null)
+  const passwordTooShort = password.length > 0 && password.length < 8
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -248,7 +311,11 @@ function UserForm({
         onSuccess(`「${name}」を更新しました`)
       } else {
         await createUser(data)
-        onSuccess(`「${name}」を追加しました`)
+        onSuccess(`「${name}」を追加しました`, {
+          name: name.trim(),
+          loginId: loginId.trim(),
+          password,
+        })
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存できませんでした。もう一度お試しください。')
@@ -300,32 +367,72 @@ function UserForm({
                 value={loginId}
                 onChange={(e) => setLoginId(e.target.value)}
                 placeholder="例: takahashi"
-                autoComplete="username"
+                autoComplete="off"
+                aria-invalid={!!loginIdError}
+                aria-describedby="loginid-hint"
                 required
               />
+              {/* 送信して初めて重複を知らされると、入力をやり直すことになる */}
+              <span
+                className={loginIdError ? 'field__error' : 'field__hint'}
+                id="loginid-hint"
+                role={loginIdError ? 'alert' : undefined}
+              >
+                {loginIdError ?? 'この人がログインに使います。半角の英数字'}
+              </span>
             </label>
 
-            <label className="field">
-              <span>
+            <div className="field">
+              <label htmlFor="pw-input">
                 パスワード{' '}
                 {isEdit ? (
                   <span className="field__hint">空欄のままなら変更しません</span>
                 ) : (
                   <span className="field__req">必須</span>
                 )}
+              </label>
+              <div className="inputrow">
+                {/* 管理者が他人のぶんを作るので、何を設定したか本人に伝える必要がある。
+                    伏せ字のままだと打ち間違いにも気づけない */}
+                <input
+                  id="pw-input"
+                  className="input"
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="new-password"
+                  aria-invalid={passwordTooShort}
+                  aria-describedby="pw-hint"
+                />
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-pressed={showPassword}
+                >
+                  {showPassword ? '隠す' : '見る'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  onClick={() => {
+                    setPassword(generatePassword())
+                    setShowPassword(true)
+                  }}
+                >
+                  作る
+                </button>
+              </div>
+              <span
+                className={passwordTooShort ? 'field__error' : 'field__hint'}
+                id="pw-hint"
+                role={passwordTooShort ? 'alert' : undefined}
+              >
+                {passwordTooShort
+                  ? '8文字以上にしてください'
+                  : '8文字以上。「作る」で読み違えにくいものを生成します'}
               </span>
-              <input
-                className="input"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="new-password"
-                aria-describedby="pw-hint"
-              />
-              <span className="field__hint" id="pw-hint">
-                8文字以上を推奨します
-              </span>
-            </label>
+            </div>
           </div>
         </fieldset>
 
@@ -420,7 +527,11 @@ function UserForm({
         <button type="button" className="btn" onClick={onCancel}>
           やめる
         </button>
-        <button type="submit" className="btn btn--primary" disabled={saving}>
+        <button
+          type="submit"
+          className="btn btn--primary"
+          disabled={saving || !!loginIdError || passwordTooShort}
+        >
           {saving ? '保存しています' : isEdit ? '更新する' : '追加する'}
         </button>
       </div>
