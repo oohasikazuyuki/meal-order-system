@@ -27,6 +27,23 @@ if [ -n "$myip" ] && [ "$resolved" != "$myip" ]; then
   exit 1
 fi
 
+echo "==> ホスト側のポート開放を確認"
+# Docker の公開ポートは INPUT チェーンを迂回するため、コンテナ経由のHTTPは
+# INPUT が閉じていても通る。一方 certbot standalone はホストに直接bindするので
+# INPUT を通る。OCIのUbuntuは 5番あたりに REJECT があり、その後ろに
+# ACCEPT を足しても到達しない。REJECT より前に入れる。
+reject_line=$(sudo iptables -L INPUT -n --line-numbers | awk '$2=="REJECT"{print $1; exit}')
+if [ -n "$reject_line" ]; then
+  for port in 80 443; do
+    sudo iptables -D INPUT -m state --state NEW -p tcp --dport "$port" -j ACCEPT 2>/dev/null || true
+  done
+  reject_line=$(sudo iptables -L INPUT -n --line-numbers | awk '$2=="REJECT"{print $1; exit}')
+  sudo iptables -I INPUT "$reject_line" -m state --state NEW -p tcp --dport 80 -j ACCEPT
+  sudo iptables -I INPUT "$((reject_line + 1))" -m state --state NEW -p tcp --dport 443 -j ACCEPT
+  sudo netfilter-persistent save >/dev/null 2>&1
+  echo "    80/443 を REJECT より前に配置"
+fi
+
 echo "==> certbot を導入"
 sudo apt-get update -qq
 sudo apt-get install -y -qq certbot >/dev/null
