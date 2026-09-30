@@ -1001,6 +1001,15 @@ class MenuTableController extends AppController
                 $ingredients = $menu['ingredients'];
                 $menuStart   = $row;
                 if (empty($ingredients)) {
+                    // 材料が1件もない献立。空欄のままだと「材料が要らない献立」なのか
+                    // 「メニューマスタへの登録漏れ」なのか、紙を見た人に区別が付かない。
+                    // 厨房に渡ったあとで気づくことになるので、その場に書いておく。
+                    // 外食は材料を持たないのが正しいので除く。
+                    if (mb_strpos($menuName, '外食') !== 0) {
+                        $sheet->getCell($ingCol . $row)->setValueExplicit('材料が未登録', $st);
+                        $sheet->getStyle($ingCol . $row)->getFont()
+                            ->getColor()->setARGB('FF9A2F2F');
+                    }
                     $row++;
                 } else {
                     foreach ($ingredients as $ing) {

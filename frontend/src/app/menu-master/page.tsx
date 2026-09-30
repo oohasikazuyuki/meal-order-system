@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, Fragment } from 'react'
 import ConfirmDialog from '../_components/ConfirmDialog'
 import { useModal } from '../_lib/useModal'
+import ErrorNotice from '../_components/ErrorNotice'
 import { useStringParam } from '../_lib/useUrlState'
 import {
   fetchMenuMasters,
@@ -73,6 +74,7 @@ export default function MenuMasterPage() {
   const [showForm, setShowForm] = useState(false)
   const [editTarget, setEditTarget] = useState<MenuMaster | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useStringParam('q')
   // ブロックは 'all' / '共通'(=null) / ブロックID の3通り。URLには文字列で置く
@@ -88,6 +90,7 @@ export default function MenuMasterPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       const [mastersRes, blocksRes, suppliersRes] = await Promise.all([
         fetchMenuMasters(),
@@ -98,7 +101,7 @@ export default function MenuMasterPage() {
       setBlocks(blocksRes.data.blocks)
       setSuppliers(suppliersRes.data.suppliers)
     } catch {
-      setError('メニューを読み込めませんでした。通信を確認して再読み込みしてください。')
+      setLoadError('メニューを読み込めませんでした。通信を確認してください。')
     } finally {
       setLoading(false)
     }
@@ -169,11 +172,8 @@ export default function MenuMasterPage() {
         />
       )}
 
-      {error && (
-        <p className="notice notice--error" role="alert">
-          {error}
-        </p>
-      )}
+      {loadError && <ErrorNotice message={loadError} onRetry={load} busy={loading} />}
+      {error && <ErrorNotice message={error} />}
       {successMsg && <p className="notice notice--ok">{successMsg}</p>}
 
       {showBulkModal && (

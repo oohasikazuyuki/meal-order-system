@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { fetchCoopOrders, saveCoopOrders, type CoopOrdersResponse } from '../_lib/api/client'
 import { getMondayOf, addWeeks, getWeekDates, parseDateStr, DOW_MON_FIRST } from '../_lib/date'
 import WeekBar from '../_components/WeekBar'
+import ErrorNotice from '../_components/ErrorNotice'
 import CoopOrderListModal from './CoopOrderListModal'
 import { buildOrderLines } from '../_lib/coopOrderList'
 import { useWeekParam } from '../_lib/useUrlState'
@@ -25,6 +26,7 @@ export default function CoopOrderPage() {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
   // 発注に出す品目。既定は全部入り。除きたいものだけ外す運用を想定している
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -33,6 +35,7 @@ export default function CoopOrderPage() {
   const load = useCallback(async (ws: string) => {
     setLoading(true)
     setError(null)
+    setLoadError(null)
     setSuccessMsg(null)
     try {
       const res = await fetchCoopOrders(ws)
@@ -49,7 +52,7 @@ export default function CoopOrderPage() {
       setEditState(init)
       setSelected(new Set(res.data.items.map((i) => i.id)))
     } catch {
-      setError('生協発注の内容を読み込めませんでした。通信を確認して、もう一度お試しください。')
+      setLoadError('生協発注の内容を読み込めませんでした。通信を確認してください。')
     } finally {
       setLoading(false)
     }
@@ -169,11 +172,10 @@ export default function CoopOrderPage() {
         入力したら「発注リストを出す」で、eふれんずの「注文コードでご注文」に貼れる形にできます。
       </p>
 
-      {error && (
-        <p className="notice notice--error" role="alert">
-          {error}
-        </p>
+      {loadError && (
+        <ErrorNotice message={loadError} onRetry={() => load(weekStart)} busy={loading} />
       )}
+      {error && <ErrorNotice message={error} />}
       {successMsg && <p className="notice notice--ok">{successMsg}</p>}
 
       {loading ? (

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import ConfirmDialog from '../_components/ConfirmDialog'
+import ErrorNotice from '../_components/ErrorNotice'
 import { generatePassword, validateLoginId } from '../_lib/password'
 import { useModal } from '../_lib/useModal'
 import {
@@ -21,6 +22,7 @@ export default function UsersPage() {
   const [users, setUsers] = useState<UserRecord[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
   // 作ったあと、本人にIDとパスワードを伝える必要がある。
   // 画面を閉じると二度と確認できないので、その場で控えられるようにする
@@ -32,11 +34,12 @@ export default function UsersPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       const res = await fetchUsers()
       setUsers(res.data.users)
     } catch {
-      setError('利用者一覧を読み込めませんでした。通信を確認して再読み込みしてください。')
+      setLoadError('利用者一覧を読み込めませんでした。通信を確認してください。')
     } finally {
       setLoading(false)
     }
@@ -96,11 +99,8 @@ export default function UsersPage() {
         />
       )}
 
-      {error && (
-        <p className="notice notice--error" role="alert">
-          {error}
-        </p>
-      )}
+      {loadError && <ErrorNotice message={loadError} onRetry={load} busy={loading} />}
+      {error && <ErrorNotice message={error} />}
       {successMsg && !handover && <p className="notice notice--ok">{successMsg}</p>}
 
       {/* パスワードはハッシュ化して保存するので、この画面を離れると二度と見られない。

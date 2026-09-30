@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import {
   fetchBlockOrderQuantities,
@@ -9,6 +9,7 @@ import {
   type MealType,
 } from './_lib/api/client'
 import { todayStr, formatLong } from './_lib/date'
+import ErrorNotice from './_components/ErrorNotice'
 
 const MEAL_TYPES: MealType[] = [1, 2, 3, 4]
 
@@ -18,14 +19,20 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const load = useCallback((t: string) => {
+    setLoading(true)
+    setError(null)
+    return fetchBlockOrderQuantities(t)
+      .then((res) => setBlocks(res.data.blocks))
+      .catch(() => setError('本日の食数を読み込めませんでした。通信を確認してください。'))
+      .finally(() => setLoading(false))
+  }, [])
+
   useEffect(() => {
     const t = todayStr()
     setToday(t)
-    fetchBlockOrderQuantities(t)
-      .then((res) => setBlocks(res.data.blocks))
-      .catch(() => setError('本日の食数を読み込めませんでした。通信を確認して再読み込みしてください。'))
-      .finally(() => setLoading(false))
-  }, [])
+    load(t)
+  }, [load])
 
   // 食事種別ごとの合計
   const totals: Record<MealType, { count: number; grams: number; menu: string | null }> = {
@@ -70,7 +77,7 @@ export default function DashboardPage() {
         </Link>
       </div>
 
-      {error && <p className="notice notice--error">{error}</p>}
+      {error && <ErrorNotice message={error} onRetry={() => load(today)} busy={loading} />}
 
       {/* 食札ごとの本日の数 */}
       <div

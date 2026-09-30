@@ -15,6 +15,7 @@ import { getHoliday } from '../_lib/holiday'
 import { usePdfDocument } from '../_lib/usePdfDocument'
 import { useWeekParam } from '../_lib/useUrlState'
 import WeekBar from '../_components/WeekBar'
+import ErrorNotice from '../_components/ErrorNotice'
 
 const PdfViewerModal = dynamic(() => import('../_components/PdfViewerModal'), { ssr: false })
 
@@ -51,17 +52,18 @@ export default function MenuTablePage() {
   const [weekStart, setWeekStart] = useWeekParam()
   const [preview, setPreview] = useState<MenuTableResponse | null>(null)
   const [loading, setLoading] = useState(false)
-  const { doc: pdfDoc, pendingKey, error, setError, open: openPdf, close: closePdf } = usePdfDocument()
+  const { doc: pdfDoc, pendingKey, error: pdfError, open: openPdf, close: closePdf } = usePdfDocument()
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [viewType, setViewType] = useState<ViewType>('staff')
 
   const loadPreview = useCallback(async (ws: string) => {
     setLoading(true)
-    setError(null)
+    setLoadError(null)
     try {
       const res = await fetchMenuTable(ws)
       setPreview(res.data)
     } catch {
-      setError('献立を読み込めませんでした。通信を確認して、もう一度お試しください。')
+      setLoadError('献立を読み込めませんでした。通信を確認してください。')
       setPreview(null)
     } finally {
       setLoading(false)
@@ -166,11 +168,15 @@ export default function MenuTablePage() {
         )}
       </div>
 
-      {error && (
-        <p className="notice notice--error" role="alert">
-          {error}
-        </p>
+      {loadError && (
+        <ErrorNotice
+          message={loadError}
+          onRetry={() => loadPreview(weekStart)}
+          busy={loading}
+        />
       )}
+
+      {pdfError && <ErrorNotice message={pdfError} />}
 
       {loading ? (
         <p className="empty" role="status">読み込んでいます</p>
@@ -314,6 +320,16 @@ function MealBlock({
             <p style={{ margin: 0, fontWeight: 700, lineHeight: 1.4, wordBreak: 'break-word' }}>
               {menu.menu_name}
             </p>
+
+            {/* 材料が1件もない献立は、名前だけが並んで数量が消えたように見える。
+                「材料が要らない献立」なのか「登録し忘れ」なのか区別が付かないので、
+                未登録であることをその場に出す。黙って空白にすると、
+                厨房に渡ったあとで気づくことになる */}
+            {viewType === 'staff' &&
+              !menu.menu_name.startsWith('外食') &&
+              menu.ingredients.length === 0 && (
+                <p className="ingline__missing">材料が未登録</p>
+              )}
 
             {viewType === 'staff' &&
               !menu.menu_name.startsWith('外食') &&

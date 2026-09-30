@@ -18,6 +18,7 @@ import WeekBar, { type DayState } from './WeekBar'
 import ConfirmDialog from './ConfirmDialog'
 import { usePdfDocument } from '../_lib/usePdfDocument'
 import PdfViewerModal from './PdfViewerModal'
+import ErrorNotice from './ErrorNotice'
 
 interface MealEdit {
   room1_kamaho_count: number
@@ -40,6 +41,7 @@ export default function DailyOrderForm() {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState<string | null>(null) // dateStr または 'all'
   const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [showPrintMenu, setShowPrintMenu] = useState(false)
@@ -64,6 +66,7 @@ export default function DailyOrderForm() {
   const loadWeek = useCallback(async (ws: string) => {
     setLoading(true)
     setError(null)
+    setLoadError(null)
     setSuccessMsg(null)
 
     const dates = getWeekDates(ws)
@@ -95,7 +98,7 @@ export default function DailyOrderForm() {
       const first = await fetchBlockOrderQuantities(dates[firstIdx])
       apply(dates[firstIdx], first.data.blocks)
     } catch {
-      setError('この週の食数を読み込めませんでした。通信を確認して、もう一度お試しください。')
+      setLoadError('この週の食数を読み込めませんでした。通信を確認してください。')
       setLoading(false)
       return
     }
@@ -329,11 +332,11 @@ export default function DailyOrderForm() {
         }
       />
 
-      {(error ?? pdfError) && (
-        <p className="notice notice--error" role="alert">
-          {error ?? pdfError}
-        </p>
+      {loadError && (
+        <ErrorNotice message={loadError} onRetry={() => loadWeek(weekStart)} busy={loading} />
       )}
+
+      {(error ?? pdfError) && <ErrorNotice message={(error ?? pdfError)!} />}
 
       {pdfDoc && (
         <PdfViewerModal
