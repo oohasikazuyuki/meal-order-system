@@ -1,0 +1,45 @@
+# 本番／Dev環境用。開発用と違い、ソースをイメージに焼いて next start で動かす。
+#
+# output: 'standalone' は試したが、Docker のビルド文脈がリポジトリ全体なので
+# ファイルトレースが next 自身の依存（find-up、@swc/helpers）を取りこぼし、
+# server.js が MODULE_NOT_FOUND で起動しなかった。
+# outputFileTracingRoot を指定しても解消しなかったため、
+# 本番依存の node_modules をそのまま入れる確実な形にしている。
+
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json* frontend/.npmrc ./
+RUN npm ci
+
+# 実行時に載せるのは本番依存だけ。dev依存（eslint, vitest, typescript）は要らない
+FROM node:20-alpine AS proddeps
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json* frontend/.npmrc ./
+RUN npm ci --omit=dev
+
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY frontend/ ./
+# NEXT_PUBLIC_* はビルド時に埋め込まれる。実行時の環境変数では変えられない
+ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_AI_PUBLIC_ENABLED=false
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_AI_PUBLIC_ENABLED=$NEXT_PUBLIC_AI_PUBLIC_ENABLED
+RUN npm run build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+# root で動かす必要はない
+RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
+COPY --from=proddeps --chown=nextjs:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
+COPY --from=builder --chown=nextjs:nodejs /app/next.config.mjs ./next.config.mjs
+USER nextjs
+EXPOSE 3000
+CMD ["npm", "run", "start"]

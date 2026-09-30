@@ -1,0 +1,94 @@
+# Dev/本番サーバー用。開発用の docker-compose.yml とは別物。
+#
+# 開発用との違い:
+#   - ソースをバインドマウントせず、イメージに焼く
+#   - フロントは npm run dev ではなく next start
+#   - ファイル監視ポーリングを切る（CPUを常時食うため）
+#   - APIのURLを外から渡す（localhost 固定だとサーバーで動かない）
+#
+# 使い方:
+#   cp .env.prod.example .env.prod && vi .env.prod
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+
+services:
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-80}:80"
+    volumes:
+      - ./docker/nginx/prod.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - meal_network
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile.prod
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      DEBUG: "false"
+      DB_HOST: db
+      DB_NAME: ${MYSQL_DATABASE}
+      DB_USER: ${MYSQL_USER}
+      DB_PASS: ${MYSQL_PASSWORD}
+      # 未設定だとリポジトリに書かれた既定値が使われ、
+      # 保存済みの連携パスワードが復号できてしまう
+      SECURITY_SALT: ${SECURITY_SALT:?SECURITY_SALT を .env.prod に設定してください}
+      KAMAHO_BASE_URL: ${KAMAHO_BASE_URL:-}
+      KAMAHO_LOGIN_ACCOUNT: ${KAMAHO_LOGIN_ACCOUNT:-}
+      KAMAHO_LOGIN_PASSWORD: ${KAMAHO_LOGIN_PASSWORD:-}
+      AI_PUBLIC_ENABLED: ${AI_PUBLIC_ENABLED:-false}
+      AI_PROVIDER: ${AI_PROVIDER:-openrouter}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/free}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - meal_network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile.prod
+      args:
+        # ビルド時に焼き込まれる。ブラウザから見えるURLを指定する
+        NEXT_PUBLIC_API_URL: ${PUBLIC_BASE_URL}/api
+        NEXT_PUBLIC_AI_PUBLIC_ENABLED: ${AI_PUBLIC_ENABLED:-false}
+    restart: unless-stopped
+    networks:
+      - meal_network
+
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: Asia/Tokyo
+    # 12GB のうち DB に与えるのは控えめでよい。実測51MiB程度しか使っていない
+    command: --innodb-buffer-pool-size=256M --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - meal_network
+
+networks:
+  meal_network:
+    driver: bridge
+
+volumes:
+  db_data:

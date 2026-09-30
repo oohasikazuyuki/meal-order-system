@@ -1015,6 +1015,96 @@ input[type='number'] {
    通知・空状態
    ========================================================================== */
 
+/* 入力欄のまとまり。関係のない項目が隣接すると、
+   どれが必須でどれが任意か読み取れなくなる */
+.formgroup {
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--r);
+  padding: 0.7rem 0.9rem 0.9rem;
+  margin: 0 0 1rem;
+}
+
+.formgroup > legend,
+.formgroup > summary {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--ink-2);
+  padding: 0 0.35rem;
+}
+
+.formgroup > summary {
+  cursor: pointer;
+  padding: 0.15rem 0.35rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.formgroup > summary:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* 任意の項目は、開くまで場所を取らない */
+.formgroup--optional {
+  background: var(--paper-alt);
+}
+
+.field__req {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-radius: 2px;
+  padding: 0.05rem 0.3rem;
+  margin-left: 0.3rem;
+}
+
+/* 作ったばかりの認証情報。閉じると二度と見られないので目立たせる */
+.handover {
+  border-color: var(--ok);
+  border-left: 4px solid var(--ok);
+}
+
+.handover__list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 1.2rem;
+  margin: 0;
+  align-items: baseline;
+}
+
+.handover__list dt {
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+}
+
+.handover__list dd {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  user-select: all;
+}
+
+/* 入力欄に操作ボタンを並べる */
+.inputrow {
+  display: flex;
+  gap: 0.4rem;
+  align-items: stretch;
+}
+
+.inputrow .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.field__error {
+  display: block;
+  font-size: var(--fs-xs);
+  color: var(--warn);
+  margin-top: 0.2rem;
+}
+
 .notice {
   border: 1px solid var(--rule);
   border-left: 4px solid var(--ink-3);

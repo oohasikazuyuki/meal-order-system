@@ -31,6 +31,10 @@ jobs:
       - name: Test
         run: npm test
 
+      # 祝日は献立表と発注書の日付に効く。ずれると紙に出るまで気づけない
+      - name: 祝日計算の確認
+        run: npm run check:holiday
+
       - name: Build
         run: npm run build
         env:
@@ -60,6 +64,10 @@ jobs:
 
       - name: Run PHPUnit tests
         run: php vendor/bin/phpunit --no-coverage
+
+      # フロントの holiday.ts と同じ規則。片方だけ直すとここで落ちる
+      - name: 祝日計算の確認
+        run: php scripts/check_holiday.php
 
   migrate:
     name: DB Migration
@@ -116,3 +124,17 @@ jobs:
 
       - name: Validate docker-compose.yml
         run: docker compose config --quiet
+
+      # サーバー用の構成は開発用と別物。壊れていても開発中は気づけない
+      - name: Validate docker-compose.prod.yml
+        run: |
+          cp .env.prod.example .env.prod
+          sed -i 's|^SECURITY_SALT=.*|SECURITY_SALT=ci-check-only|' .env.prod
+          sed -i 's|^PUBLIC_BASE_URL=.*|PUBLIC_BASE_URL=http://example.test|' .env.prod
+          sed -i 's|^MYSQL_ROOT_PASSWORD=.*|MYSQL_ROOT_PASSWORD=ci|' .env.prod
+          sed -i 's|^MYSQL_PASSWORD=.*|MYSQL_PASSWORD=ci|' .env.prod
+          docker compose -f docker-compose.prod.yml --env-file .env.prod config --quiet
+
+      - name: Validate docker-compose.micro.yml
+        run: |
+          docker compose -f docker-compose.micro.yml --env-file .env.prod config --quiet
