@@ -1,0 +1,68 @@
+# ドメイン + HTTPS 用。${DOMAIN} を実際のホスト名に置き換えて使う。
+#
+# 証明書は Let's Encrypt を certbot で取得し、ホスト側の
+# /etc/letsencrypt をコンテナに読み取り専用でマウントする。
+
+# 証明書の更新用に80番は残す。それ以外はHTTPSへ送る
+server {
+    listen 80;
+    server_name ${DOMAIN};
+
+    # certbot の HTTP-01 チャレンジはHTTPのまま通す必要がある
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    # HTTPSで来た人にHTTPへ戻らせない。max-ageは運用が安定するまで短め
+    add_header Strict-Transport-Security "max-age=86400" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+
+    resolver 127.0.0.11 valid=30s;
+
+    client_max_body_size 32m;
+    server_tokens off;
+
+    location /api/ {
+        include fastcgi_params;
+        fastcgi_pass backend:9000;
+        fastcgi_param SCRIPT_FILENAME /var/www/html/webroot/index.php;
+        fastcgi_param SCRIPT_NAME     /index.php;
+        fastcgi_param REQUEST_URI     $request_uri;
+        fastcgi_param HTTPS           on;
+        fastcgi_connect_timeout 30s;
+        fastcgi_send_timeout 300s;
+        # 献立表のPDFは LibreOffice の起動を挟むので数秒〜十数秒かかる
+        fastcgi_read_timeout 300s;
+    }
+
+    location / {
+        set $frontend_upstream http://frontend:3000;
+        proxy_pass $frontend_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+        proxy_read_timeout 300s;
+    }
+}
