@@ -6,6 +6,9 @@ use Cake\I18n\FrozenTime;
 
 class UserService
 {
+    /** 短すぎるパスワードを弾く。画面の案内と揃えておく */
+    private const MIN_PASSWORD_LENGTH = 8;
+
     private UserRepository $userRepository;
     private CredentialCryptoService $credentialCryptoService;
 
@@ -79,6 +82,24 @@ class UserService
                 'success' => false,
                 'status' => 400,
                 'message' => 'パスワードは必須です'
+            ];
+        }
+
+        if (mb_strlen((string)$data['password']) < self::MIN_PASSWORD_LENGTH) {
+            return [
+                'success' => false,
+                'status' => 400,
+                'message' => 'パスワードは' . self::MIN_PASSWORD_LENGTH . '文字以上にしてください'
+            ];
+        }
+
+        // DBに一意制約を張ってあるが、その例外をそのまま返すと利用者には
+        // 500エラーのHTMLしか出ない。何が悪いのか伝わる形で先に弾く
+        if ($this->userRepository->findByLoginId(trim((string)$data['login_id']))) {
+            return [
+                'success' => false,
+                'status' => 409,
+                'message' => 'このログインIDはすでに使われています'
             ];
         }
 
@@ -164,9 +185,29 @@ class UserService
 
         // パスワードが送られてきた場合のみハッシュ化
         if (!empty($data['password'])) {
+            if (mb_strlen((string)$data['password']) < self::MIN_PASSWORD_LENGTH) {
+                return [
+                    'success' => false,
+                    'status' => 400,
+                    'message' => 'パスワードは' . self::MIN_PASSWORD_LENGTH . '文字以上にしてください'
+                ];
+            }
             $data['password'] = password_hash($data['password'], PASSWORD_BCRYPT);
         } else {
             unset($data['password']);
+        }
+
+        // 自分以外が同じIDを使っていないか。
+        // 重複すると、後から作られた人はログインできなくなる
+        if (!empty($data['login_id'])) {
+            $existing = $this->userRepository->findByLoginId(trim((string)$data['login_id']));
+            if ($existing && (int)$existing->id !== $id) {
+                return [
+                    'success' => false,
+                    'status' => 409,
+                    'message' => 'このログインIDはすでに使われています'
+                ];
+            }
         }
 
         $this->applyKamahoCredentialPayload($data);
