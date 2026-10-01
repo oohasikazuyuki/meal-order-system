@@ -7,6 +7,7 @@ import ErrorNotice from '../_components/ErrorNotice'
 import { useStringParam } from '../_lib/useUrlState'
 import {
   fetchMenuMasters,
+  fetchMenus,
   createMenuMaster,
   updateMenuMaster,
   deleteMenuMaster,
@@ -22,6 +23,11 @@ import {
   type AiMenuMasterDraftResponse,
   type AiMenuMasterBulkDish,
 } from '../_lib/api/client'
+import {
+  findMissingMasters,
+  fillMissingMasters,
+  type MissingMaster,
+} from '../_lib/fillMissingMasters'
 
 const UNIT_OPTIONS = ['g', 'kg', 'ml', 'L', '個', '枚', '本', '袋', '缶', '束', '合', '大さじ', '小さじ', '切れ', '適量']
 const DISH_CATEGORY_PRESETS = ['主食', '副菜', '主菜', '汁物', '丼物', 'デザート', 'おやつ']
@@ -85,7 +91,52 @@ export default function MenuMasterPage() {
   const setFilterBlockId = (next: number | null | 'all') =>
     setBlockParam(next === 'all' ? 'all' : next === null ? 'common' : String(next))
   const [showBulkModal, setShowBulkModal] = useState(false)
+  // 献立にあるのにマスタが無いもの。材料が無いと発注書に出てこない
+  const [missing, setMissing] = useState<MissingMaster[]>([])
+  const [fillProgress, setFillProgress] = useState<string | null>(null)
   const [openId, setOpenId] = useState<number | null>(null)
+
+  const checkMissing = useCallback(async (list: MenuMaster[]) => {
+    try {
+      const menus = (await fetchMenus()).data?.menus ?? []
+      setMissing(findMissingMasters(menus, list))
+    } catch {
+      // 洗い出しに失敗しても一覧は使えるので、ここでは何も出さない
+    }
+  }, [])
+
+  const handleFillMissing = async () => {
+    if (fillProgress !== null) return
+    setError(null)
+    setSuccessMsg(null)
+    setFillProgress('準備しています')
+    try {
+      const res = await fillMissingMasters(missing, (p) =>
+        setFillProgress(`${p.total}件のうち ${p.done}件${p.name ? `：${p.name}` : ''}`)
+      )
+      if (res.quotaExhausted) {
+        setError(
+          `今日のAIの無料枠を使い切ったので、${res.failed.length}件を残して止めました。` +
+            '明日の朝9時に戻ります。急ぐ分は手で材料を登録してください。'
+        )
+      } else if (res.failed.length > 0) {
+        // 無料のAIはモデルが毎回変わり、うまく答えないことがある。
+        // もう一度押せば、できなかった分だけやり直す
+        setError(
+          `${res.failed.length}件は材料を作れませんでした。もう一度押すと、残りだけやり直します：` +
+            res.failed.join('、')
+        )
+      }
+      if (res.created > 0) {
+        setSuccessMsg(`${res.created}件のメニューに材料を入れました。中身を確かめてください。`)
+      }
+      await load()
+    } catch {
+      setError('材料の作成が途中で止まりました。もう一度お試しください。')
+    } finally {
+      setFillProgress(null)
+    }
+  }
   const [deleteTarget, setDeleteTarget] = useState<MenuMaster | null>(null)
 
   const load = useCallback(async () => {
@@ -100,12 +151,13 @@ export default function MenuMasterPage() {
       setMasters(mastersRes.data.menu_masters)
       setBlocks(blocksRes.data.blocks)
       setSuppliers(suppliersRes.data.suppliers)
+      void checkMissing(mastersRes.data.menu_masters)
     } catch {
       setLoadError('メニューを読み込めませんでした。通信を確認してください。')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [checkMissing])
 
   useEffect(() => {
     load()
@@ -227,6 +279,33 @@ export default function MenuMasterPage() {
           </div>
         </div>
 
+        {/* 献立に使われているのにマスタが無いメニュー。材料が無いと発注書に
+            一切出てこないので、その食材は発注されないまま紙が厨房へ渡る */}
+        {missing.length > 0 && (
+          <div className="sheet__body notice-card" role="alert">
+            <p style={{ margin: '0 0 0.4rem', fontWeight: 700 }}>
+              材料が登録されていない献立が{missing.length}件あります
+            </p>
+            <p style={{ margin: '0 0 0.6rem' }}>
+              このままだと<strong>発注書に出てこないので、食材が発注されません。</strong>
+            </p>
+            <p style={{ margin: '0 0 0.7rem', color: 'var(--ink-3)' }}>
+              {missing.map((m) => m.name).join('、')}
+            </p>
+            {AI_PUBLIC_ENABLED && (
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={handleFillMissing}
+                disabled={fillProgress !== null}
+                aria-busy={fillProgress !== null}
+              >
+                {fillProgress !== null ? `材料を作っています（${fillProgress}）` : 'AIで材料を入れる'}
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="sheet__body" style={{ borderBottom: '1px solid var(--rule-soft)' }}>
           <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
             <label className="field" style={{ marginBottom: 0, flex: 1, minWidth: 180, maxWidth: 320 }}>
@@ -316,6 +395,12 @@ export default function MenuMasterPage() {
                       <tr>
                         <td className="lead">
                           {m.name}
+                          {/* AIが作ったもの。中身を見て保存すれば消える */}
+                          {m.needs_review && (
+                            <span className="tag tag--warn" style={{ marginLeft: '0.4rem' }}>
+                              AI作成・未確認
+                            </span>
+                          )}
                           {m.memo && (
                             <span className="muted" style={{ fontWeight: 400 }}>
                               {' '}

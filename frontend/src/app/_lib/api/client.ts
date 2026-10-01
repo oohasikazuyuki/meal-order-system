@@ -442,6 +442,8 @@ export interface MenuMaster {
   block_id: number | null;
   grams_per_person: number;
   memo: string;
+  /** AIが作って、まだ人が確認していない */
+  needs_review?: boolean;
   menu_ingredients?: MenuIngredient[];
 }
 
@@ -451,6 +453,8 @@ export interface MenuMasterInput {
   block_id?: number | null;
   grams_per_person?: number;
   memo?: string;
+  /** AIが作ったものに付ける。発注書を出す前の注意表示に使う */
+  needs_review?: boolean;
   ingredients?: MenuIngredientInput[];
 }
 
@@ -636,9 +640,18 @@ export interface OrderSheetSupplier {
   days: Record<string, OrderSheetIngredient[]>;
 }
 
+/** AIが作って、まだ人が確認していないメニュー */
+export interface UnreviewedMaster {
+  id: number;
+  name: string;
+  /** この2週間で使われている日数 */
+  dates: number;
+}
+
 export interface OrderSheetPreviewResponse {
   ok: boolean;
   week_start: string;
+  unreviewed?: UnreviewedMaster[];
   suppliers: OrderSheetSupplier[];
 }
 

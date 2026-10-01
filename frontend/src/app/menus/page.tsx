@@ -28,6 +28,7 @@ import { usePdfDocument } from '../_lib/usePdfDocument'
 import { useMonthParam } from '../_lib/useUrlState'
 import ErrorNotice from '../_components/ErrorNotice'
 import PdfViewerModal from '../_components/PdfViewerModal'
+import { fillMissingMastersFor } from '../_lib/fillMissingMasters'
 
 const MEAL_TYPES: MealType[] = [1, 2, 3, 4]
 const AI_PUBLIC_ENABLED = process.env.NEXT_PUBLIC_AI_PUBLIC_ENABLED === 'true'
@@ -239,7 +240,28 @@ export default function MenusPage() {
       } else if (addedCount === 0) {
         setNotice({ tone: 'plain', text: '足す献立はありませんでした。対象の日にはすでに献立があります。' })
       } else {
-        setNotice({ tone: 'ok', text: `${addedCount}件の献立を足しました` })
+        // 献立名だけ作ってもメニューマスタは増えない。材料が無い献立は
+        // 発注書に一切出てこないので、その食材は発注されないまま紙が厨房へ渡る。
+        // ここで続けて材料まで作っておく。
+        const fresh = (await fetchMenusByMonth(year, month)).data?.menus ?? []
+        const filled = await fillMissingMastersFor(fresh, (p) => {
+          setNotice({
+            tone: 'plain',
+            text: `材料を作っています（${p.total}件のうち ${p.done}件）${p.name ? `：${p.name}` : ''}`,
+          })
+        })
+        setNotice({
+          tone: filled.failed.length > 0 ? 'error' : 'ok',
+          text:
+            `${addedCount}件の献立を足しました。` +
+            (filled.created > 0 ? `材料は${filled.created}件を作りました（要確認）。` : '') +
+            (filled.quotaExhausted
+              ? `今日のAIの無料枠を使い切ったので、材料は${filled.failed.length}件が未登録のままです。` +
+                'メニューと材料の画面から、明日もう一度お試しください。'
+              : filled.failed.length > 0
+                ? `${filled.failed.length}件は材料を作れませんでした：${filled.failed.join('、')}`
+                : ''),
+        })
       }
     } catch {
       setNotice({ tone: 'error', text: 'AIの献立追加が途中で止まりました。' })

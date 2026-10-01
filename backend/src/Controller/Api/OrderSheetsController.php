@@ -87,8 +87,42 @@ class OrderSheetsController extends AppController
             ];
         }
 
-        $this->set(['ok' => true, 'week_start' => $weekStart->format('Y-m-d'), 'suppliers' => $result]);
-        $this->viewBuilder()->setOption('serialize', ['ok', 'week_start', 'suppliers']);
+        $this->set([
+            'ok'         => true,
+            'week_start' => $weekStart->format('Y-m-d'),
+            'suppliers'  => $result,
+            'unreviewed' => $this->findUnreviewedMasters($weekStart, (clone $week2Start)->modify('+6 days')),
+        ]);
+        $this->viewBuilder()->setOption('serialize', ['ok', 'week_start', 'suppliers', 'unreviewed']);
+    }
+
+    /**
+     * この期間の献立に使われていて、AIが作ったまま人が見ていないメニューを返す。
+     *
+     * 材料と数量はそのまま発注書になって仕入先に渡る。マスタ登録が人の手だった頃は
+     * そこが実質的なチェックだったので、AIに作らせるなら発注の直前に一度知らせる。
+     *
+     * @return array<int, array{id:int, name:string, dates:int}>
+     */
+    private function findUnreviewedMasters(DateTime $from, DateTime $to): array
+    {
+        $rows = $this->Menus->getConnection()->execute("
+            SELECT mm.id, mm.name, COUNT(DISTINCT m.menu_date) AS dates
+            FROM menus m
+            JOIN menu_masters mm
+              ON mm.name = m.name
+             AND (mm.block_id = m.block_id OR mm.block_id IS NULL)
+            WHERE m.menu_date BETWEEN :from AND :to
+              AND mm.needs_review = 1
+            GROUP BY mm.id, mm.name
+            ORDER BY dates DESC, mm.name
+        ", ['from' => $from->format('Y-m-d'), 'to' => $to->format('Y-m-d')])->fetchAll('assoc');
+
+        return array_map(fn($r) => [
+            'id'    => (int)$r['id'],
+            'name'  => $r['name'],
+            'dates' => (int)$r['dates'],
+        ], $rows);
     }
 
     /**

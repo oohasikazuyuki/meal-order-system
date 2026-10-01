@@ -11,5 +11,6 @@ class MenuMaster extends Entity
         'block_id'         => true,
         'grams_per_person' => true,
         'memo'             => true,
+        'needs_review'     => true,
     ];
 }

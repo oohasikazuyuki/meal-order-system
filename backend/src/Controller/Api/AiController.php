@@ -3,11 +3,15 @@ namespace App\Controller\Api;
 
 use App\Application\Exception\ErrorCode;
 use App\Controller\AppController;
+use App\Utility\JsonExtractor;
 use DateTime;
 
 class AiController extends AppController
 {
     private AiMenuLogicHelper $logic;
+
+    /** 1日の無料枠を使い切った（OpenRouter の free-models-per-day） */
+    private bool $aiQuotaExhausted = false;
 
     public function initialize(): void
     {
@@ -110,6 +114,16 @@ class AiController extends AppController
 
         [$draft, $rawText] = $this->generateMenuMasterDraftWithOllama($name, $candidateNames, $suppliers);
         if ($draft === null) {
+            if ($this->aiQuotaExhausted) {
+                $this->respondError(
+                    429,
+                    ErrorCode::AI_PARSE,
+                    '今日のAIの無料枠を使い切りました。明日の朝9時に戻ります。'
+                        . 'それまでは手で材料を登録してください。',
+                    ['quota_exhausted' => true]
+                );
+                return;
+            }
             $this->respondError(
                 502,
                 ErrorCode::AI_PARSE,
@@ -572,7 +586,14 @@ class AiController extends AppController
         $appName = (string)(getenv('OPENROUTER_APP_NAME') ?: 'meal-order-system');
         $url = $baseUrl . '/chat/completions';
 
-        $maxTokens = isset($options['num_predict']) ? max(64, (int)$options['num_predict']) : 256;
+        // num_predict は手元のOllama（小さいモデル）に合わせた値で、180程度しかない。
+        // OpenRouter の無料枠は思考を書くモデルに回されることがあり、その思考も
+        // max_tokens を食う。180だと考えている途中で打ち切られ、JSONにたどり着かない。
+        // 実際に「雑穀米」の下書きが、中国語の思考218文字で切れて失敗していた。
+        // 無料枠なので上限を広げる分の損はない。
+        $maxTokens = isset($options['num_predict'])
+            ? max(1024, (int)$options['num_predict'])
+            : 1024;
         $temperature = isset($options['temperature']) ? (float)$options['temperature'] : 0.4;
         $payload = [
             'model' => $model,
@@ -606,7 +627,14 @@ class AiController extends AppController
 
             if ($errno === 0 && $status >= 200 && $status < 300 && is_string($body)) {
                 $decoded = json_decode($body, true);
-                $content = (string)($decoded['choices'][0]['message']['content'] ?? '');
+                $message = $decoded['choices'][0]['message'] ?? [];
+                $content = (string)($message['content'] ?? '');
+                // 推論を書くモデルは content を空にして reasoning にだけ出すことがある。
+                // openrouter/free は毎回ちがうモデルに回されるので、その手のモデルを
+                // 引くたびに「AIの生成に失敗しました」になっていた。
+                if ($content === '') {
+                    $content = (string)($message['reasoning'] ?? '');
+                }
                 if ($content !== '') {
                     return ['ok' => true, 'text' => $content];
                 }
@@ -614,6 +642,14 @@ class AiController extends AppController
 
             $bodySnippet = is_string($body) ? mb_substr($body, 0, 240) : '';
             error_log("OpenRouter call failed: attempt={$attempt} status={$status} errno={$errno} err={$error} body={$bodySnippet}");
+
+            // 1日の無料枠を使い切ると 429 が返る。これは待っても再実行しても変わらない。
+            // 「生成に失敗しました」とだけ出すと、原因が分からないまま何十分も
+            // やり直すことになるので、枠切れだと分かるようにしておく。
+            if ($status === 429 && str_contains($bodySnippet, 'free-models-per-day')) {
+                $this->aiQuotaExhausted = true;
+                return ['ok' => false, 'text' => ''];
+            }
             if ($attempt === 0) {
                 usleep(300000);
             }
@@ -684,11 +720,7 @@ class AiController extends AppController
 
     private function extractJsonObject(string $text): ?array
     {
-        if (!preg_match('/\{[\s\S]*\}/', $text, $m)) {
-            return null;
-        }
-        $decoded = json_decode($m[0], true);
-        return is_array($decoded) ? $decoded : null;
+        return JsonExtractor::object($text);
     }
 
     private function extractSuggestionsFromPartialText(string $text, array $candidateSet): ?array
