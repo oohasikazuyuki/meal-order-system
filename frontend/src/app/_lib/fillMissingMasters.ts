@@ -74,7 +74,8 @@ export function findMissingMasters(menus: MenuItem[], masters: MenuMaster[]): Mi
  */
 export async function fillMissingMasters(
   missing: MissingMaster[],
-  onProgress?: (p: FillProgress) => void
+  onProgress?: (p: FillProgress) => void,
+  supplierIds?: number[]
 ): Promise<FillResult> {
   const failed: string[] = []
   let created = 0
@@ -83,7 +84,11 @@ export async function fillMissingMasters(
     const item = missing[i]
     onProgress?.({ done: i, total: missing.length, name: item.name })
     try {
-      const res = await draftMenuMasterByAi({ name: item.name, block_id: item.blockId })
+      const res = await draftMenuMasterByAi({
+        name: item.name,
+        block_id: item.blockId,
+        supplier_ids: supplierIds,
+      })
       const draft = res.data?.draft
       if (!draft) {
         failed.push(item.name)
@@ -116,11 +121,12 @@ export async function fillMissingMasters(
 /** 献立とマスタを読み直して、足りない分を埋める */
 export async function fillMissingMastersFor(
   menus: MenuItem[],
-  onProgress?: (p: FillProgress) => void
+  onProgress?: (p: FillProgress) => void,
+  supplierIds?: number[]
 ): Promise<FillResult & { missing: number }> {
   const masters = (await fetchMenuMasters()).data?.menu_masters ?? []
   const missing = findMissingMasters(menus, masters)
   if (missing.length === 0) return { created: 0, failed: [], missing: 0 }
-  const res = await fillMissingMasters(missing, onProgress)
+  const res = await fillMissingMasters(missing, onProgress, supplierIds)
   return { ...res, missing: missing.length }
 }

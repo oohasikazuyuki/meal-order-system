@@ -28,6 +28,8 @@ import {
   fillMissingMasters,
   type MissingMaster,
 } from '../_lib/fillMissingMasters'
+import { useAiSuppliers } from '../_lib/useAiSuppliers'
+import AiSupplierPicker from '../_components/AiSupplierPicker'
 
 const UNIT_OPTIONS = ['g', 'kg', 'ml', 'L', '個', '枚', '本', '袋', '缶', '束', '合', '大さじ', '小さじ', '切れ', '適量']
 const DISH_CATEGORY_PRESETS = ['主食', '副菜', '主菜', '汁物', '丼物', 'デザート', 'おやつ']
@@ -76,6 +78,8 @@ export default function MenuMasterPage() {
   const [masters, setMasters] = useState<MenuMaster[]>([])
   const [blocks, setBlocks] = useState<Block[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  // どの店が何を扱うかは施設ごとに違う。AIに推測させず、人が選んだ中から選ばせる
+  const { selectedIds: aiSupplierIds, toggle: toggleAiSupplier } = useAiSuppliers(suppliers)
   const [loading, setLoading] = useState(false)
   const [showForm, setShowForm] = useState(false)
   const [editTarget, setEditTarget] = useState<MenuMaster | null>(null)
@@ -111,8 +115,10 @@ export default function MenuMasterPage() {
     setSuccessMsg(null)
     setFillProgress('準備しています')
     try {
-      const res = await fillMissingMasters(missing, (p) =>
-        setFillProgress(`${p.total}件のうち ${p.done}件${p.name ? `：${p.name}` : ''}`)
+      const res = await fillMissingMasters(
+        missing,
+        (p) => setFillProgress(`${p.total}件のうち ${p.done}件${p.name ? `：${p.name}` : ''}`),
+        aiSupplierIds
       )
       if (res.quotaExhausted) {
         setError(
@@ -293,15 +299,23 @@ export default function MenuMasterPage() {
               {missing.map((m) => m.name).join('、')}
             </p>
             {AI_PUBLIC_ENABLED && (
-              <button
-                type="button"
-                className="btn btn--primary"
-                onClick={handleFillMissing}
-                disabled={fillProgress !== null}
-                aria-busy={fillProgress !== null}
-              >
-                {fillProgress !== null ? `材料を作っています（${fillProgress}）` : 'AIで材料を入れる'}
-              </button>
+              <>
+                <AiSupplierPicker
+                  suppliers={suppliers}
+                  selectedIds={aiSupplierIds}
+                  onToggle={toggleAiSupplier}
+                  disabled={fillProgress !== null}
+                />
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={handleFillMissing}
+                  disabled={fillProgress !== null || aiSupplierIds.length === 0}
+                  aria-busy={fillProgress !== null}
+                >
+                  {fillProgress !== null ? `材料を作っています（${fillProgress}）` : 'AIで材料を入れる'}
+                </button>
+              </>
             )}
           </div>
         )}

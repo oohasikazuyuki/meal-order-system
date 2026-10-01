@@ -107,10 +107,7 @@ class AiController extends AppController
             }
         }
 
-        $suppliers = $this->Suppliers->find()
-            ->select(['id', 'name', 'code'])
-            ->orderBy(['id' => 'ASC'])
-            ->toArray();
+        $suppliers = $this->suppliersForPrompt($this->request->getData('supplier_ids'));
 
         [$draft, $rawText] = $this->generateMenuMasterDraftWithOllama($name, $candidateNames, $suppliers);
         if ($draft === null) {
@@ -161,10 +158,9 @@ class AiController extends AppController
         $candidateNames = $this->candidateItemsToNames($this->fetchCandidateMenuNames($blockId));
 
         if ($includeIngredients) {
-            $suppliers = $this->Suppliers->find()
-                ->select(['id', 'name', 'code', 'notes'])
-                ->orderBy(['id' => 'ASC'])
-                ->toArray();
+            // notes は「火曜発注・翌週水金納品」のような納品のメモで、
+            // どの材料をどこで頼むかの判断には関係ない。渡すと雑音になる
+            $suppliers = $this->suppliersForPrompt($this->request->getData('supplier_ids'));
             [$dishes, $rawText] = $this->generateMealSetWithOllama($candidateNames, $suppliers);
         } else {
             [$dishes, $rawText] = $this->generateMealSetNamesWithOllama($candidateNames);
@@ -244,15 +240,7 @@ class AiController extends AppController
      */
     private function generateMealSetWithOllama(array $candidates, array $suppliers): array
     {
-        $supplierLines = [];
-        foreach ($suppliers as $s) {
-            $line  = '・' . (string)$s->name;
-            $notes = trim((string)($s->notes ?? ''));
-            if ($notes !== '') {
-                $line .= '（' . $notes . '）';
-            }
-            $supplierLines[] = $line;
-        }
+        $supplierLines = array_map(fn($s) => '・' . (string)$s->name, $suppliers);
         $supplierInfo = empty($supplierLines) ? 'なし' : implode("\n", $supplierLines);
 
         $prompt = implode("\n", [
@@ -440,6 +428,30 @@ class AiController extends AppController
     private function normalizeCategorySuggestions(array $raw, array $candidateSet): array
     {
         return $this->logic->normalizeCategorySuggestions($raw, $candidateSet);
+    }
+
+    /**
+     * AIに見せる仕入先を絞り込む。
+     *
+     * どの仕入先が何を扱うかは店ごとに違い、AIには分からない。推測させると
+     * 「だし汁をスーパーで頼む」のような、その施設では成り立たない割り振りが
+     * 混ざる。使う仕入先を人が選べるようにして、その中からだけ選ばせる。
+     *
+     * supplier_ids を渡さなければ、これまでどおり全部を見せる。
+     *
+     * @param mixed $raw リクエストの supplier_ids
+     */
+    private function suppliersForPrompt(mixed $raw): array
+    {
+        $query = $this->Suppliers->find()
+            ->select(['id', 'name', 'code'])
+            ->orderBy(['id' => 'ASC']);
+
+        $ids = is_array($raw) ? array_values(array_filter(array_map('intval', $raw))) : [];
+        if ($ids !== []) {
+            $query->where(['Suppliers.id IN' => $ids]);
+        }
+        return $query->toArray();
     }
 
     private function generateMenuMasterDraftWithOllama(string $name, array $candidates, array $suppliers): array
