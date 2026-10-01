@@ -445,9 +445,28 @@ class AiController extends AppController
     private function generateMenuMasterDraftWithOllama(string $name, array $candidates, array $suppliers): array
     {
         $supplierNames = array_map(fn($s) => (string)$s->name, $suppliers);
+        // ここで出た数量は、そのまま 1人分 × 食数 で発注量になり仕入先へ渡る。
+        // 分量の目安を書かないと、味噌汁の豚肉を100g/人（40食で4kg）、
+        // 和え物のアスパラを300g/人（12kg）のように出してくる。
+        // 施設が実際に登録している1人分を例として見せると、妥当な範囲に収まる。
         $prompt = implode("\n", [
-            "あなたは保育施設向けメニューマスタ作成アシスタントです。",
+            "あなたは児童養護施設の献立の、材料と分量を決める担当です。",
             "対象メニュー名: {$name}",
+            "",
+            "amount は【1人分】の分量です。献立全体の量ではありません。",
+            "この施設で実際に使っている1人分の例:",
+            "  主菜の肉・魚 … 豚ロース85g / 鶏もも肉90g / 鮭1切れ",
+            "  汁物の具の肉 … 20〜30g（主菜より少ない）",
+            "  汁物のみそ  … 12〜14g",
+            "  乾物      … 乾燥わかめ2g / かつお節3g / 乾燥ひじき4g",
+            "  主食の米   … 70g",
+            "  野菜      … 1品あたり20〜50g",
+            "この範囲から大きく外れる数値を出さないでください。",
+            "40食分をまとめて発注するため、1人分を10g間違えると400gずれます。",
+            "",
+            "材料名は日本語で書いてください。英語は使わないでください。",
+            "grams_per_person は、その料理1食分のできあがり重量です。0にしないでください。",
+            "",
             "既存メニュー参考: " . (empty($candidates) ? 'なし' : implode('、', array_slice($candidates, 0, 30))),
             "仕入先候補: " . (empty($supplierNames) ? 'なし' : implode('、', $supplierNames)),
             "出力はJSONのみ。形式:",
@@ -574,64 +593,99 @@ class AiController extends AppController
 
     private function callOpenRouter(string $prompt, int $timeoutSec = 90, array $options = []): array
     {
-        $apiKey = trim((string)(getenv('OPENROUTER_API_KEY') ?: ''));
-        if ($apiKey === '') {
-            error_log('OpenRouter call failed: missing OPENROUTER_API_KEY');
+        $siteUrl = (string)(getenv('OPENROUTER_SITE_URL') ?: 'http://localhost');
+        $appName = (string)(getenv('OPENROUTER_APP_NAME') ?: 'meal-order-system');
+
+        return $this->callOpenAiCompatible('OpenRouter', $prompt, $timeoutSec, $options, [
+            'base_url' => rtrim((string)(getenv('OPENROUTER_BASE_URL') ?: 'https://openrouter.ai/api/v1'), '/'),
+            'api_key'  => trim((string)(getenv('OPENROUTER_API_KEY') ?: '')),
+            'key_name' => 'OPENROUTER_API_KEY',
+            'model'    => (string)(getenv('OPENROUTER_MODEL') ?: 'qwen/qwen3-4b:free'),
+            'headers'  => ['HTTP-Referer: ' . $siteUrl, 'X-Title: ' . $appName],
+        ]);
+    }
+
+    private function callGroq(string $prompt, int $timeoutSec = 90, array $options = []): array
+    {
+        return $this->callOpenAiCompatible('Groq', $prompt, $timeoutSec, $options, [
+            'base_url' => 'https://api.groq.com/openai/v1',
+            'api_key'  => trim((string)(getenv('GROQ_API_KEY') ?: '')),
+            'key_name' => 'GROQ_API_KEY',
+            'model'    => (string)(getenv('GROQ_MODEL') ?: 'openai/gpt-oss-120b'),
+            'headers'  => [],
+            // gpt-oss は思考も出力トークンに数え、しかも要求トークンがそのまま
+            // 毎分の上限（8000）に計上される。low にすると思考が1038字→127字、
+            // 出力トークンが578→336に減り、JSONの途中切れも毎分上限も緩む。
+            // 中身の質は変わらなかった。対応しないモデルに変えるときは空にする
+            'reasoning_effort' => (string)(getenv('GROQ_REASONING_EFFORT') ?: 'low'),
+        ]);
+    }
+
+    /**
+     * OpenAI互換のチャットAPIを叩く（OpenRouter / Groq 共通）。
+     *
+     * 両者は認証ヘッダと宛先が違うだけで、あとは同じ。別々に書いていたため、
+     * OpenRouter側で見つけた3つの不具合（推論しか返さないモデル、
+     * トークン上限の不足、枠切れの見落とし）がGroq側に残っていた。
+     *
+     * @param array{base_url:string,api_key:string,key_name:string,model:string,headers:list<string>,reasoning_effort?:string} $cfg
+     */
+    private function callOpenAiCompatible(
+        string $label,
+        string $prompt,
+        int $timeoutSec,
+        array $options,
+        array $cfg
+    ): array {
+        if ($cfg['api_key'] === '') {
+            error_log("{$label} call failed: missing {$cfg['key_name']}");
             return ['ok' => false, 'text' => ''];
         }
 
-        $baseUrl = rtrim((string)(getenv('OPENROUTER_BASE_URL') ?: 'https://openrouter.ai/api/v1'), '/');
-        $model = (string)(getenv('OPENROUTER_MODEL') ?: 'qwen/qwen3-4b:free');
-        $siteUrl = (string)(getenv('OPENROUTER_SITE_URL') ?: 'http://localhost');
-        $appName = (string)(getenv('OPENROUTER_APP_NAME') ?: 'meal-order-system');
-        $url = $baseUrl . '/chat/completions';
-
         // num_predict は手元のOllama（小さいモデル）に合わせた値で、180程度しかない。
-        // OpenRouter の無料枠は思考を書くモデルに回されることがあり、その思考も
-        // max_tokens を食う。180だと考えている途中で打ち切られ、JSONにたどり着かない。
-        // 実際に「雑穀米」の下書きが、中国語の思考218文字で切れて失敗していた。
-        // 無料枠なので上限を広げる分の損はない。
+        // 思考を書くモデルはその思考も max_tokens を食うため、考えている途中で
+        // 打ち切られてJSONにたどり着かない。実際に下書きがこれで失敗していた。
         $maxTokens = isset($options['num_predict'])
             ? max(1024, (int)$options['num_predict'])
             : 1024;
-        $temperature = isset($options['temperature']) ? (float)$options['temperature'] : 0.4;
-        $payload = [
-            'model' => $model,
-            'messages' => [
-                ['role' => 'user', 'content' => $prompt],
-            ],
-            'temperature' => $temperature,
-            'max_tokens' => $maxTokens,
-        ];
 
-        for ($attempt = 0; $attempt < 2; $attempt++) {
-            $ch = curl_init($url);
+        $payload = [
+            'model'       => $cfg['model'],
+            'messages'    => [['role' => 'user', 'content' => $prompt]],
+            'temperature' => isset($options['temperature']) ? (float)$options['temperature'] : 0.4,
+            'max_tokens'  => $maxTokens,
+        ];
+        if (!empty($cfg['reasoning_effort'])) {
+            $payload['reasoning_effort'] = $cfg['reasoning_effort'];
+        }
+
+        // 429 には2種類ある。1日の枠切れは待っても無駄だが、毎分の上限
+        // （Groqは8000トークン/分）は数秒待てば通る。待たずに諦めていたため、
+        // 20件まとめて作ると9件で止まり、残り11件が「作れませんでした」になっていた。
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $ch = curl_init($cfg['base_url'] . '/chat/completions');
             curl_setopt_array($ch, [
-                CURLOPT_POST => true,
+                CURLOPT_POST           => true,
                 CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_HTTPHEADER => [
-                    'Authorization: Bearer ' . $apiKey,
+                CURLOPT_HTTPHEADER     => array_merge([
+                    'Authorization: Bearer ' . $cfg['api_key'],
                     'Content-Type: application/json',
-                    'HTTP-Referer: ' . $siteUrl,
-                    'X-Title: ' . $appName,
-                ],
-                CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE),
-                CURLOPT_TIMEOUT => $timeoutSec,
+                ], $cfg['headers']),
+                CURLOPT_POSTFIELDS     => json_encode($payload, JSON_UNESCAPED_UNICODE),
+                CURLOPT_TIMEOUT        => $timeoutSec,
                 CURLOPT_CONNECTTIMEOUT => 10,
             ]);
-            $body = curl_exec($ch);
-            $errno = curl_errno($ch);
+            $body   = curl_exec($ch);
+            $errno  = curl_errno($ch);
             $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $error = curl_error($ch);
+            $error  = curl_error($ch);
             curl_close($ch);
 
             if ($errno === 0 && $status >= 200 && $status < 300 && is_string($body)) {
                 $decoded = json_decode($body, true);
                 $message = $decoded['choices'][0]['message'] ?? [];
                 $content = (string)($message['content'] ?? '');
-                // 推論を書くモデルは content を空にして reasoning にだけ出すことがある。
-                // openrouter/free は毎回ちがうモデルに回されるので、その手のモデルを
-                // 引くたびに「AIの生成に失敗しました」になっていた。
+                // 推論を書くモデルは content を空にして reasoning にだけ出すことがある
                 if ($content === '') {
                     $content = (string)($message['reasoning'] ?? '');
                 }
@@ -641,14 +695,21 @@ class AiController extends AppController
             }
 
             $bodySnippet = is_string($body) ? mb_substr($body, 0, 240) : '';
-            error_log("OpenRouter call failed: attempt={$attempt} status={$status} errno={$errno} err={$error} body={$bodySnippet}");
+            error_log("{$label} call failed: attempt={$attempt} status={$status} errno={$errno} err={$error} body={$bodySnippet}");
 
-            // 1日の無料枠を使い切ると 429 が返る。これは待っても再実行しても変わらない。
-            // 「生成に失敗しました」とだけ出すと、原因が分からないまま何十分も
-            // やり直すことになるので、枠切れだと分かるようにしておく。
-            if ($status === 429 && str_contains($bodySnippet, 'free-models-per-day')) {
-                $this->aiQuotaExhausted = true;
-                return ['ok' => false, 'text' => ''];
+            if ($status === 429) {
+                // 1日の枠切れ。待っても再実行しても変わらないので、ここで止める。
+                // 「生成に失敗しました」としか出ないと、原因が分からないまま
+                // 何十分もやり直すことになる
+                if ($this->isDailyQuotaError($bodySnippet)) {
+                    $this->aiQuotaExhausted = true;
+                    return ['ok' => false, 'text' => ''];
+                }
+                // 毎分の上限。相手が「何秒後に」と言ってくるので、それに従う
+                $wait = $this->retryAfterSeconds($bodySnippet);
+                error_log("{$label}: 毎分の上限。{$wait}秒待って再試行します");
+                sleep($wait);
+                continue;
             }
             if ($attempt === 0) {
                 usleep(300000);
@@ -658,64 +719,27 @@ class AiController extends AppController
         return ['ok' => false, 'text' => ''];
     }
 
-    private function callGroq(string $prompt, int $timeoutSec = 90, array $options = []): array
+    /**
+     * 429 のうち「1日の枠を使い切った」ものを見分ける。
+     * 毎分の上限なら数秒待てば通るので、同じ扱いにしてはいけない。
+     */
+    private function isDailyQuotaError(string $body): bool
     {
-        $apiKey = trim((string)(getenv('GROQ_API_KEY') ?: ''));
-        if ($apiKey === '') {
-            error_log('Groq call failed: missing GROQ_API_KEY');
-            return ['ok' => false, 'text' => ''];
-        }
-
-        $baseUrl = 'https://api.groq.com/openai/v1';
-        $model = (string)(getenv('GROQ_MODEL') ?: 'llama-3.1-8b-instant');
-        $url = $baseUrl . '/chat/completions';
-
-        $maxTokens = isset($options['num_predict']) ? max(64, (int)$options['num_predict']) : 256;
-        $temperature = isset($options['temperature']) ? (float)$options['temperature'] : 0.4;
-        $payload = [
-            'model' => $model,
-            'messages' => [
-                ['role' => 'user', 'content' => $prompt],
-            ],
-            'temperature' => $temperature,
-            'max_tokens' => $maxTokens,
-        ];
-
-        for ($attempt = 0; $attempt < 2; $attempt++) {
-            $ch = curl_init($url);
-            curl_setopt_array($ch, [
-                CURLOPT_POST => true,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_HTTPHEADER => [
-                    'Authorization: Bearer ' . $apiKey,
-                    'Content-Type: application/json',
-                ],
-                CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE),
-                CURLOPT_TIMEOUT => $timeoutSec,
-                CURLOPT_CONNECTTIMEOUT => 10,
-            ]);
-            $body = curl_exec($ch);
-            $errno = curl_errno($ch);
-            $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $error = curl_error($ch);
-            curl_close($ch);
-
-            if ($errno === 0 && $status >= 200 && $status < 300 && is_string($body)) {
-                $decoded = json_decode($body, true);
-                $content = (string)($decoded['choices'][0]['message']['content'] ?? '');
-                if ($content !== '') {
-                    return ['ok' => true, 'text' => $content];
-                }
-            }
-
-            $bodySnippet = is_string($body) ? mb_substr($body, 0, 240) : '';
-            error_log("Groq call failed: attempt={$attempt} status={$status} errno={$errno} err={$error} body={$bodySnippet}");
-            if ($attempt === 0) {
-                usleep(300000);
+        foreach (['free-models-per-day', 'per day', 'RPD', 'TPD'] as $needle) {
+            if (str_contains($body, $needle)) {
+                return true;
             }
         }
+        return false;
+    }
 
-        return ['ok' => false, 'text' => ''];
+    /** 相手が言ってきた待ち時間（秒）。分からなければ10秒。長すぎる指定は30秒で切る */
+    private function retryAfterSeconds(string $body): int
+    {
+        if (preg_match('/try again in ([0-9.]+)\s*s/i', $body, $m)) {
+            return min(30, max(1, (int)ceil((float)$m[1]) + 1));
+        }
+        return 10;
     }
 
     private function extractJsonObject(string $text): ?array
