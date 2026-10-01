@@ -1019,7 +1019,13 @@ class MenuTableController extends AppController
                         $fillColor = $this->memoSupplierColor($supplierCode, '');
 
                         $sheet->getCell($ingCol . $row)->setValueExplicit($ing['name'], $st);
-                        $sheet->getCell($qtyCol . $row)->setValueExplicit($this->fmtQty($ing['amount'], $ing['unit']), $st);
+                        [$qtyText, $isPerPerson] = $this->qtyLabel($ing);
+                        $sheet->getCell($qtyCol . $row)->setValueExplicit($qtyText, $st);
+                        // 1人あたり表示は総量と読み違えると発注量を間違えるので、色を落として区別する
+                        if ($isPerPerson) {
+                            $sheet->getStyle($qtyCol . $row)->getFont()
+                                ->getColor()->setARGB('FF767676');
+                        }
                         $sheet->getCell($supCol . $row)->setValueExplicit($supplierCode, $st);
                         $sheet->getCell($delCol . $row)->setValueExplicit($ing['delivery_date'], $st);
 
@@ -1149,14 +1155,13 @@ class MenuTableController extends AppController
                 mi.name     AS ingredient_name,
                 mi.unit,
                 mi.sort_order,
+                mi.amount   AS per_person,
+                mi.persons_per_unit,
                 COALESCE(s.id,   0)  AS supplier_id,
                 COALESCE(s.code, '') AS supplier_code,
                 COALESCE(s.delivery_days, '') AS delivery_days,
-                CASE
-                    WHEN s.code = 'Z'
-                    THEN SUM(mm.grams_per_person * COALESCE(boq.order_quantity, 0))
-                    ELSE SUM(mi.amount * COALESCE(boq.order_quantity, 0))
-                END AS total_amount
+                SUM(COALESCE(boq.order_quantity, 0)) AS head_count,
+                SUM(mi.amount * COALESCE(boq.order_quantity, 0)) AS total_amount
             FROM menus m
             JOIN menu_masters mm
               ON mm.name = m.name
@@ -1171,7 +1176,8 @@ class MenuTableController extends AppController
              AND boq.meal_type  = m.meal_type
             WHERE m.menu_date BETWEEN :start AND :end
             GROUP BY m.menu_date, m.meal_type, m.name, m.block_id,
-                     mi.name, mi.unit, mi.sort_order, s.id, s.code, s.delivery_days
+                     mi.name, mi.unit, mi.sort_order, mi.amount, mi.persons_per_unit,
+                     s.id, s.code, s.delivery_days
             ORDER BY m.menu_date, m.meal_type, m.name, mi.sort_order
         ", ['start' => $weekStart->format('Y-m-d'), 'end' => $weekEnd->format('Y-m-d')])->fetchAll('assoc');
 
@@ -1195,18 +1201,23 @@ class MenuTableController extends AppController
             $d    = $r['menu_date'];
             $t    = (int)$r['meal_type'];
             $n    = $r['menu_name'];
-            $unit = $r['supplier_code'] === 'Z' ? 'g' : $r['unit'];
-            $key  = $r['ingredient_name'] . '||' . $unit . '||' . (int)$r['supplier_id'];
+            $unit = $r['unit'];
+            $ppu  = $r['persons_per_unit'] !== null ? (int)$r['persons_per_unit'] : 0;
+            // 1単位で何人分かが違えば別の行として扱う（発注書の集計キーと揃える）
+            $key  = $r['ingredient_name'] . '||' . $unit . '||' . (int)$r['supplier_id'] . '||' . $ppu;
 
             if (!isset($ingMap[$d][$t][$n][$key])) {
                 $ingMap[$d][$t][$n][$key] = [
-                    'name'          => $r['ingredient_name'],
-                    'amount'        => 0.0,
-                    'unit'          => $unit,
-                    'supplier_code' => $r['supplier_code'],
-                    'supplier_id'   => (int)$r['supplier_id'],
-                    'delivery_days' => $r['delivery_days'],
-                    'sort_order'    => (int)$r['sort_order'],
+                    'name'             => $r['ingredient_name'],
+                    'amount'           => 0.0,
+                    'head_count'       => 0,
+                    'per_person'       => (float)$r['per_person'],
+                    'persons_per_unit' => $ppu,
+                    'unit'             => $unit,
+                    'supplier_code'    => $r['supplier_code'],
+                    'supplier_id'      => (int)$r['supplier_id'],
+                    'delivery_days'    => $r['delivery_days'],
+                    'sort_order'       => (int)$r['sort_order'],
                 ];
             } else {
                 // 複数ブロック分: sort_order は最小値を使用
@@ -1215,7 +1226,8 @@ class MenuTableController extends AppController
                     (int)$r['sort_order']
                 );
             }
-            $ingMap[$d][$t][$n][$key]['amount'] += (float)$r['total_amount'];
+            $ingMap[$d][$t][$n][$key]['amount']     += (float)$r['total_amount'];
+            $ingMap[$d][$t][$n][$key]['head_count'] += (int)$r['head_count'];
         }
 
         $result = [];
@@ -1244,6 +1256,11 @@ class MenuTableController extends AppController
                         $ing['delivery_date'] = $this->calcDeliveryDate(
                             $ing['delivery_days'], $date, $weekStart
                         );
+                        // 「20人で1本」のような材料は、人数を足し終えてから単位数に直す。
+                        // ブロックごとに切り上げると、合計が発注書と1つずれる。
+                        if ($ing['persons_per_unit'] > 0) {
+                            $ing['amount'] = (float)ceil($ing['head_count'] / $ing['persons_per_unit']);
+                        }
                         unset($ing['delivery_days'], $ing['supplier_id'], $ing['sort_order']);
                         $enriched[] = $ing;
                     }
@@ -1352,6 +1369,31 @@ class MenuTableController extends AppController
         $dayNames = ['日', '月', '火', '水', '木', '金', '土'];
         $dow      = $dayNames[(int)$dt->format('w')];
         return (int)$dt->format('n') . '月' . (int)$dt->format('j') . '日(' . $dow . ')';
+    }
+
+    /**
+     * 数量セルの文字列。
+     *
+     * 食数が未入力の日は総量が 0 になる。黙って空欄にすると「要らない材料」なのか
+     * 「食数をまだ入れていない」のか紙を見た人に区別が付かないので、
+     * 代わりに1人あたりの分量を出す（例: 70g/人、1本/20人）。
+     * 掛け算の元が分かれば、人数が決まったときにその場で出せる。
+     *
+     * @return array{0:string,1:bool} [表示文字列, 1人あたり表示か]
+     */
+    private function qtyLabel(array $ing): array
+    {
+        if ((int)($ing['head_count'] ?? 0) > 0) {
+            return [$this->fmtQty((float)$ing['amount'], (string)$ing['unit']), false];
+        }
+        $ppu  = (int)($ing['persons_per_unit'] ?? 0);
+        $unit = (string)$ing['unit'];
+        if ($ppu > 0) {
+            return ['1' . $unit . '/' . $ppu . '人', true];
+        }
+        $per = (float)($ing['per_person'] ?? 0);
+        if ($per <= 0) return ['', false];
+        return [$this->fmtQty($per, $unit) . '/人', true];
     }
 
     private function fmtQty(float $amount, string $unit): string

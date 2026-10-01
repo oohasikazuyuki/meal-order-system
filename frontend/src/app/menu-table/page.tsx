@@ -7,6 +7,7 @@ import {
   fetchMenuTablePdf,
   type MenuTableResponse,
   type MenuTableDay,
+  type MenuTableMenu,
   type MealType,
   MEAL_TYPE_LABELS,
 } from '../_lib/api/client'
@@ -14,6 +15,7 @@ import { getMondayOf, addWeeks, formatShort, DOW_MON_FIRST } from '../_lib/date'
 import { getHoliday } from '../_lib/holiday'
 import { usePdfDocument } from '../_lib/usePdfDocument'
 import { useWeekParam } from '../_lib/useUrlState'
+import { qtyLabel } from '../_lib/menuQty'
 import WeekBar from '../_components/WeekBar'
 import ErrorNotice from '../_components/ErrorNotice'
 
@@ -40,10 +42,6 @@ const SUPPLIER_NAMES: Record<string, string> = {
 
 function supplierColor(code: string) {
   return SUPPLIER_COLORS[(code || '').toUpperCase()] ?? { color: 'var(--ink-3)', bg: 'var(--paper-alt)' }
-}
-
-function formatAmount(amount: number): string {
-  return amount % 1 === 0 ? String(amount) : amount.toFixed(2)
 }
 
 type ViewType = 'staff' | 'children'
@@ -282,16 +280,7 @@ function MealBlock({
   viewType,
 }: {
   mealType: MealType
-  menus: {
-    menu_name: string
-    ingredients: {
-      name: string
-      amount: number
-      unit: string
-      supplier_code: string
-      delivery_date: string
-    }[]
-  }[]
+  menus: MenuTableMenu[]
   viewType: ViewType
 }) {
   // 外食があればその日はそちらを表示する
@@ -338,9 +327,10 @@ function MealBlock({
                 return (
                   <div key={ii} className="ingline">
                     <span className="ingline__name">{ing.name}</span>
-                    <span className="ingline__amount num">
-                      {formatAmount(ing.amount)}
-                      {ing.unit}
+                    <span
+                      className={`ingline__amount num${qtyLabel(ing).perPerson ? ' ingline__amount--per-person' : ''}`}
+                    >
+                      {qtyLabel(ing).text}
                     </span>
                     {(ing.supplier_code || ing.delivery_date) && (
                       <span className="ingline__meta">

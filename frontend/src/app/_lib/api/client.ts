@@ -644,8 +644,15 @@ export interface OrderSheetPreviewResponse {
 
 export interface MenuTableIngredient {
   name: string
+  /** 総量。食数が未入力の日は 0 になるので、表示は per_person へ切り替える */
   amount: number
   unit: string
+  /** その日その食の食数の合計。0 なら食数が未入力 */
+  head_count: number
+  /** 1人あたりの分量 */
+  per_person: number
+  /** 1単位で何人分か（例: 20 なら「20人で1本」）。0 なら指定なし */
+  persons_per_unit: number
   supplier_code: string
   delivery_date: string
 }

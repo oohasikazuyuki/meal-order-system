@@ -721,6 +721,12 @@ input[type='number'] {
   font-weight: 700;
 }
 
+/* 1人あたりの表示。総量と読み違えると発注量を間違えるので、太字をやめて色を落とす */
+.ingline__amount--per-person {
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
 .ingline__meta {
   grid-column: 1 / -1;
   display: flex;
