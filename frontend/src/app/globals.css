@@ -721,6 +721,63 @@ input[type='number'] {
   font-weight: 700;
 }
 
+/* AIに使わせる仕入先の選択 */
+.ai-suppliers {
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  padding: 0.6rem 0.8rem 0.7rem;
+  margin: 0 0 0.8rem;
+  background: var(--paper);
+}
+
+.ai-suppliers legend {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  padding: 0 0.3rem;
+}
+
+.ai-suppliers__hint {
+  margin: 0 0 0.5rem;
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  line-height: 1.6;
+}
+
+.ai-suppliers__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.9rem;
+}
+
+.ai-suppliers__item {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.ai-suppliers__code {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+
+.ai-suppliers__warn {
+  margin: 0.5rem 0 0;
+  font-size: var(--fs-xs);
+  color: var(--warn);
+}
+
+/* AIが作って未確認、のような「出す前に見てほしい」知らせ */
+.notice-card {
+  border-left: 4px solid var(--warn);
+  background: var(--warn-bg);
+}
+
+.notice-card .sheet__body {
+  color: var(--ink);
+}
+
 /* 1人あたりの表示。総量と読み違えると発注量を間違えるので、太字をやめて色を落とす */
 .ingline__amount--per-person {
   font-weight: 400;

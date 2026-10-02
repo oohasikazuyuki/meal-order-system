@@ -103,3 +103,47 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod exec backend php 
 
 **この環境に入れるのは動作確認用のダミーデータだけです。**
 入居者の実データを置くには施設側の合意が要ります。
+
+## AI（ローカルLLM）
+
+### なぜ別の機械に置くか
+
+アプリ機は 1GB しかなく、モデルが載りません。Ampere A1 の無料枠
+（2OCPU / 12GB）を丸ごとモデルに使い、アプリ機から内部ネットワーク越しに呼びます。
+
+OpenRouter の無料枠は **50回/日**で、毎回ちがうモデルに回されます。
+分類用モデル（content-safety）や、中国語で考えて途中でトークンが尽きるモデルに
+当たるとそのまま失敗します。献立の材料を 21件作るだけで枠が尽きました。
+
+### 手順
+
+```
+# 1. LLM機を取る（空きが出るまで繰り返す）
+NAME=meal-order-llm OCPUS=2 MEM=12 bash deploy/oci-launch-retry.sh
+
+# 2. 取れたら、その機械で
+APP_IP=<アプリ機の内部IP> bash setup-ollama.sh
+
+# 3. アプリ機の .env を書き換えて再起動
+AI_PROVIDER=ollama
+OLLAMA_BASE_URL=http://<LLM機の内部IP>:11434
+OLLAMA_MODEL=qwen2.5:7b-instruct-q4_K_M
+```
+
+### 閉じ方
+
+Ollama には**認証がありません**。インターネットに出すと誰でも使える状態になります。
+3段で閉じています。
+
+| 段 | やること |
+|---|---|
+| OCIセキュリティリスト | 11434 を**開けない** |
+| iptables | アプリ機の内部IPだけ通す |
+| 待ち受け | 内部IPのみ（公開IPでは待たない） |
+
+### 速さの目安
+
+GPUが無いので速くはありません。献立の材料作成は月に一度のまとめ作業なので、
+待てる範囲に収まるかを `setup-ollama.sh` の最後で実測します。
+
+遅すぎる場合はモデルを小さくします（`qwen2.5:3b-instruct-q4_K_M`）。

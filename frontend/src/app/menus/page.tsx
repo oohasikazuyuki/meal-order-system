@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
+  fetchSuppliers,
   fetchMenusByMonth,
   saveMenu,
   deleteMenu,
@@ -18,6 +19,7 @@ import {
   type MenuMaster,
   type Block,
   type AiMenuSuggestResponse,
+  type Supplier,
 } from '../_lib/api/client'
 import { getStoredUser } from '../_lib/auth'
 import { DOW, toDateStr, todayStr, getMondayOf, formatLong } from '../_lib/date'
@@ -28,6 +30,9 @@ import { usePdfDocument } from '../_lib/usePdfDocument'
 import { useMonthParam } from '../_lib/useUrlState'
 import ErrorNotice from '../_components/ErrorNotice'
 import PdfViewerModal from '../_components/PdfViewerModal'
+import { fillMissingMastersFor } from '../_lib/fillMissingMasters'
+import { useAiSuppliers } from '../_lib/useAiSuppliers'
+import AiSupplierPicker from '../_components/AiSupplierPicker'
 
 const MEAL_TYPES: MealType[] = [1, 2, 3, 4]
 const AI_PUBLIC_ENABLED = process.env.NEXT_PUBLIC_AI_PUBLIC_ENABLED === 'true'
@@ -91,6 +96,17 @@ export default function MenusPage() {
     close: closePdf,
   } = usePdfDocument()
   const [confirmMonthAi, setConfirmMonthAi] = useState(false)
+  const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  // 何をどこで頼むかは店ごとに違う。AIに推測させず、人が選んだ中から選ばせる
+  const { selectedIds: aiSupplierIds, toggle: toggleAiSupplier } = useAiSuppliers(suppliers)
+
+  useEffect(() => {
+    fetchSuppliers()
+      .then((res) => setSuppliers(res.data?.suppliers ?? []))
+      .catch(() => {
+        /* 読めなくても献立の表示自体はできる */
+      })
+  }, [])
 
   const [user, setUser] = useState(() => getStoredUser())
   useEffect(() => {
@@ -239,7 +255,32 @@ export default function MenusPage() {
       } else if (addedCount === 0) {
         setNotice({ tone: 'plain', text: '足す献立はありませんでした。対象の日にはすでに献立があります。' })
       } else {
-        setNotice({ tone: 'ok', text: `${addedCount}件の献立を足しました` })
+        // 献立名だけ作ってもメニューマスタは増えない。材料が無い献立は
+        // 発注書に一切出てこないので、その食材は発注されないまま紙が厨房へ渡る。
+        // ここで続けて材料まで作っておく。
+        const fresh = (await fetchMenusByMonth(year, month)).data?.menus ?? []
+        const filled = await fillMissingMastersFor(
+          fresh,
+          (p) => {
+            setNotice({
+              tone: 'plain',
+              text: `材料を作っています（${p.total}件のうち ${p.done}件）${p.name ? `：${p.name}` : ''}`,
+            })
+          },
+          aiSupplierIds
+        )
+        setNotice({
+          tone: filled.failed.length > 0 ? 'error' : 'ok',
+          text:
+            `${addedCount}件の献立を足しました。` +
+            (filled.created > 0 ? `材料は${filled.created}件を作りました（要確認）。` : '') +
+            (filled.quotaExhausted
+              ? `今日のAIの無料枠を使い切ったので、材料は${filled.failed.length}件が未登録のままです。` +
+                'メニューと材料の画面から、明日もう一度お試しください。'
+              : filled.failed.length > 0
+                ? `${filled.failed.length}件は材料を作れませんでした：${filled.failed.join('、')}`
+                : ''),
+        })
       }
     } catch {
       setNotice({ tone: 'error', text: 'AIの献立追加が途中で止まりました。' })
@@ -479,11 +520,18 @@ export default function MenusPage() {
       {confirmMonthAi && (
         <ConfirmDialog
           title={`${year}年${month}月にAIの献立案を足します`}
-          message={`${daysInMonth}日分を1日ずつ順に処理します。すでに献立がある日はそのままです。件数によっては数分かかります。`}
+          message={`${daysInMonth}日分を1日ずつ順に処理します。すでに献立がある日はそのままです。献立名のあと、材料がまだ無いものは材料も作ります。件数によっては数分かかります。`}
           confirmLabel="作成をはじめる"
+          confirmDisabled={aiSupplierIds.length === 0}
           onConfirm={handleMonthAiAdd}
           onCancel={() => setConfirmMonthAi(false)}
-        />
+        >
+          <AiSupplierPicker
+            suppliers={suppliers}
+            selectedIds={aiSupplierIds}
+            onToggle={toggleAiSupplier}
+          />
+        </ConfirmDialog>
       )}
 
       {modalDate && (

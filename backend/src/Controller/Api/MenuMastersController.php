@@ -81,6 +81,8 @@ class MenuMastersController extends AppController
             'block_id'         => $blockId,
             'grams_per_person' => (float)($data['grams_per_person'] ?? 0),
             'memo'             => trim((string)($data['memo'] ?? '')),
+            // AIが作ったものは未確認。発注書を出す前に知らせるための印
+            'needs_review'     => !empty($data['needs_review']),
         ]);
 
         if ($this->MenuMasters->save($entity)) {
@@ -116,6 +118,11 @@ class MenuMastersController extends AppController
             'block_id'         => $blockId,
             'grams_per_person' => (float)($data['grams_per_person'] ?? $entity->grams_per_person),
             'memo'             => trim((string)($data['memo'] ?? $entity->memo)),
+            // 人がこの画面で保存した = 中身を見た、ということなので未確認を外す。
+            // 「確認済みにする」を別操作にすると、見ずに押されるだけになる
+            'needs_review'     => array_key_exists('needs_review', $data)
+                ? !empty($data['needs_review'])
+                : false,
         ]);
 
         if ($this->MenuMasters->save($entity)) {

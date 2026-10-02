@@ -40,6 +40,21 @@ while true; do
   fi
 
   reason=$(echo "$out" | grep -o '"message": "[^"]*"' | head -1 | cut -d'"' -f4)
-  echo "$(date '+%H:%M:%S') 空きなし（${reason:-不明}）"
-  sleep "$INTERVAL"
+  wait="$INTERVAL"
+
+  # 「在庫が無い」と「こちらが叩きすぎ」は別物。同じ文言だと、
+  # 待てば取れるのか、自分で自分を止めているのかが分からない
+  case "$out" in
+    *TooManyRequests*)
+      wait=$((INTERVAL * 2))
+      echo "$(date '+%H:%M:%S') こちらの試行が多すぎます。${wait}秒あけます" ;;
+    *"Out of host capacity"*)
+      echo "$(date '+%H:%M:%S') 在庫なし。${wait}秒後に再試行" ;;
+    *LimitExceeded*)
+      echo "$(date '+%H:%M:%S') 無料枠の上限に達しています。待っても取れないので止めます（${reason}）"
+      exit 1 ;;
+    *)
+      echo "$(date '+%H:%M:%S') 失敗（${reason:-不明}）。${wait}秒後に再試行" ;;
+  esac
+  sleep "$wait"
 done

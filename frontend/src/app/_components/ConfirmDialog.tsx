@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 
 interface Props {
   title: string
@@ -11,6 +11,10 @@ interface Props {
   cancelLabel?: string
   /** 取り消せない操作は true。実行ボタンを警告色にする */
   destructive?: boolean
+  /** 実行前に決めてもらうことがあるとき（仕入先の選択など）に差し込む */
+  children?: ReactNode
+  /** 実行ボタンを押せない状態にする（選択が足りないときなど） */
+  confirmDisabled?: boolean
   onConfirm: () => void
   onCancel: () => void
 }
@@ -30,6 +34,8 @@ export default function ConfirmDialog({
   confirmLabel,
   cancelLabel = 'やめる',
   destructive = false,
+  children,
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: Props) {
@@ -83,7 +89,7 @@ export default function ConfirmDialog({
         aria-modal="true"
         aria-labelledby="confirm-title"
         aria-describedby="confirm-message"
-        style={{ maxWidth: 420 }}
+        style={{ maxWidth: children ? 560 : 420 }}
       >
         <div className="modal__head">
           <h2 id="confirm-title">{title}</h2>
@@ -93,6 +99,7 @@ export default function ConfirmDialog({
           <p id="confirm-message" style={{ margin: 0, lineHeight: 1.7 }}>
             {message}
           </p>
+          {children}
         </div>
 
         <div className="modal__foot">
@@ -103,6 +110,7 @@ export default function ConfirmDialog({
             type="button"
             className={destructive ? 'btn btn--danger' : 'btn btn--primary'}
             onClick={onConfirm}
+            disabled={confirmDisabled}
           >
             {confirmLabel}
           </button>

@@ -210,7 +210,11 @@ export const suggestMenuByAi = (data: AiMenuSuggestInput) =>
   client.post<AiMenuSuggestResponse>('/ai/menu-suggest', data)
 export const draftMenuMasterByAi = (data: AiMenuMasterDraftInput) =>
   client.post<AiMenuMasterDraftResponse>('/ai/menu-master-draft', data)
-export const bulkDraftMenuMasterByAi = (data: { block_id?: number | null; include_ingredients?: boolean }) =>
+export const bulkDraftMenuMasterByAi = (data: {
+  block_id?: number | null
+  include_ingredients?: boolean
+  supplier_ids?: number[]
+}) =>
   client.post<AiMenuMasterBulkResponse>('/ai/menu-master-bulk', data)
 
 // --- Birthday Menu Dates ---
@@ -386,6 +390,8 @@ export interface AiMenuSuggestResponse {
 export interface AiMenuMasterDraftInput {
   name?: string;
   block_id?: number | null;
+  /** AIに使わせる仕入先。省略すると全部が対象（店ごとに扱いが違うため人が選ぶ） */
+  supplier_ids?: number[];
 }
 
 export interface AiMenuMasterDraftResponse {
@@ -442,6 +448,8 @@ export interface MenuMaster {
   block_id: number | null;
   grams_per_person: number;
   memo: string;
+  /** AIが作って、まだ人が確認していない */
+  needs_review?: boolean;
   menu_ingredients?: MenuIngredient[];
 }
 
@@ -451,6 +459,8 @@ export interface MenuMasterInput {
   block_id?: number | null;
   grams_per_person?: number;
   memo?: string;
+  /** AIが作ったものに付ける。発注書を出す前の注意表示に使う */
+  needs_review?: boolean;
   ingredients?: MenuIngredientInput[];
 }
 
@@ -636,9 +646,18 @@ export interface OrderSheetSupplier {
   days: Record<string, OrderSheetIngredient[]>;
 }
 
+/** AIが作って、まだ人が確認していないメニュー */
+export interface UnreviewedMaster {
+  id: number;
+  name: string;
+  /** この2週間で使われている日数 */
+  dates: number;
+}
+
 export interface OrderSheetPreviewResponse {
   ok: boolean;
   week_start: string;
+  unreviewed?: UnreviewedMaster[];
   suppliers: OrderSheetSupplier[];
 }
 

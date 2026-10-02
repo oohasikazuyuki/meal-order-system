@@ -69,6 +69,11 @@ jobs:
       - name: 祝日計算の確認
         run: php scripts/check_holiday.php
 
+      # AIは正しく答えているのに取り出せず「生成に失敗」になる壊れ方をする。
+      # 画面上はAIの不調に見えるので、原因にたどり着くまでが長い
+      - name: AI返答からのJSON取り出しを確認
+        run: php scripts/check_json_extractor.php
+
   migrate:
     name: DB Migration
     runs-on: ubuntu-latest

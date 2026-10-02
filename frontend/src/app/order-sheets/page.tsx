@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import {
   fetchOrderSheetPreview,
@@ -105,6 +106,34 @@ export default function OrderSheetsPage() {
       )}
 
       {pdfError && <ErrorNotice message={pdfError} />}
+
+      {/* AIが決めた材料と数量は、そのまま発注書になって仕入先に渡る。
+          マスタ登録が人の手だった頃はそこが実質的なチェックだったので、
+          AIに作らせるなら発注の直前に一度知らせる。
+          効いてくるのは数量で、味噌汁を「1人500g」と書かれれば40食で20kg発注される */}
+      {!loading && (preview?.unreviewed?.length ?? 0) > 0 && (
+        <section className="sheet notice-card" role="alert">
+          <div className="sheet__body">
+            <p style={{ margin: '0 0 0.5rem', fontWeight: 700 }}>
+              この2週間には、AIが作って未確認のメニューが{preview!.unreviewed!.length}件あります
+            </p>
+            <p style={{ margin: '0 0 0.6rem' }}>
+              材料と数量がそのまま発注量になります。発注する前に中身を確かめてください。
+            </p>
+            <ul style={{ margin: '0 0 0.7rem', paddingLeft: '1.2rem' }}>
+              {preview!.unreviewed!.map((m) => (
+                <li key={m.id}>
+                  {m.name}
+                  <span style={{ color: 'var(--ink-3)' }}>（{m.dates}日分）</span>
+                </li>
+              ))}
+            </ul>
+            <Link href="/menu-master" className="btn">
+              メニューと材料で確かめる
+            </Link>
+          </div>
+        </section>
+      )}
 
       {loading ? (
         <p className="empty" role="status">集計しています</p>

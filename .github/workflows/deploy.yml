@@ -57,7 +57,7 @@ jobs:
           tags: ${{ env.IMAGE_PREFIX }}/frontend:dev
           build-args: |
             NEXT_PUBLIC_API_URL=${{ secrets.PUBLIC_BASE_URL }}/api
-            NEXT_PUBLIC_AI_PUBLIC_ENABLED=false
+            NEXT_PUBLIC_AI_PUBLIC_ENABLED=true
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,scope=frontend,mode=max
 
@@ -72,6 +72,16 @@ jobs:
           echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy
           chmod 600 ~/.ssh/deploy
           ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      # サーバーの docker-compose.yml は手で置いたコピーで、これまで同期されて
+      # いなかった。環境変数を足しても反映されず、手で転送するまで気づけない
+      - name: compose 定義を揃える
+        uses: actions/checkout@v4
+
+      - name: compose をサーバーへ送る
+        run: |
+          scp -i ~/.ssh/deploy docker-compose.micro.yml \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:~/meal-order/docker-compose.yml"
 
       - name: 新しいイメージに入れ替えて起動
         run: |
