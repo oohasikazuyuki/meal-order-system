@@ -73,15 +73,22 @@ jobs:
           chmod 600 ~/.ssh/deploy
           ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
-      # サーバーの docker-compose.yml は手で置いたコピーで、これまで同期されて
-      # いなかった。環境変数を足しても反映されず、手で転送するまで気づけない
+      # サーバーの docker-compose.yml は、setup-https.sh が 443番と証明書の
+      # マウントを書き足した状態になっている。リポジトリの素のファイルで
+      # 上書きすると HTTPS が消えてサイトごと落ちる（実際に落とした）。
+      # 送ったあとに同じ書き足しをやり直す。
       - name: compose 定義を揃える
         uses: actions/checkout@v4
 
-      - name: compose をサーバーへ送る
+      - name: compose をサーバーへ送り、HTTPS設定を入れ直す
+        env:
+          TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
         run: |
-          scp -i ~/.ssh/deploy docker-compose.micro.yml \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:~/meal-order/docker-compose.yml"
+          ssh -i ~/.ssh/deploy "$TARGET" 'mkdir -p ~/meal-order/deploy'
+          scp -i ~/.ssh/deploy docker-compose.micro.yml "$TARGET:~/meal-order/docker-compose.yml"
+          # 書き足しスクリプト自体も送る。送らないとサーバー側が古いまま直らない
+          scp -i ~/.ssh/deploy deploy/apply-https-to-compose.sh "$TARGET:~/meal-order/deploy/"
+          ssh -i ~/.ssh/deploy "$TARGET" 'cd ~/meal-order && bash deploy/apply-https-to-compose.sh'
 
       - name: 新しいイメージに入れ替えて起動
         run: |
