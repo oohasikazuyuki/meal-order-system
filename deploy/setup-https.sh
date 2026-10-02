@@ -62,8 +62,18 @@ echo "==> nginx の設定を HTTPS 用に差し替え"
 sed "s|\${DOMAIN}|$DOMAIN|g" docker/nginx/prod-ssl.conf.template > docker/nginx/active.conf
 
 echo "==> compose に証明書と443番を追加"
-# デプロイのたびに同じ書き足しが要るので、処理は1か所にまとめてある
-bash "$(dirname "$0")/apply-https-to-compose.sh"
+# デプロイのたびに同じ書き足しが要るので、処理は1か所にまとめてある。
+# このスクリプトはサーバーでは ~/meal-order/ 直下に置かれ、
+# リポジトリでは deploy/ にある。どちらから流されても動くようにする。
+apply=""
+for cand in "deploy/apply-https-to-compose.sh" "$(dirname "$0")/apply-https-to-compose.sh"; do
+  if [ -f "$cand" ]; then apply="$cand"; break; fi
+done
+if [ -z "$apply" ]; then
+  echo "    apply-https-to-compose.sh が見つかりません" >&2
+  exit 1
+fi
+bash "$apply"
 
 echo "==> 起動"
 sudo docker compose up -d nginx
