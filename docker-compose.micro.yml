@@ -29,7 +29,14 @@ services:
       DB_USER: ${MYSQL_USER}
       DB_PASS: ${MYSQL_PASSWORD}
       SECURITY_SALT: ${SECURITY_SALT:?SECURITY_SALT を .env に設定してください}
-      AI_PUBLIC_ENABLED: "false"
+      AI_PUBLIC_ENABLED: ${AI_PUBLIC_ENABLED:-false}
+      # groq を既定にする。openrouter の無料枠は50回/日で、毎回ちがうモデルに
+      # 回されるため、献立の材料を20件作るだけで尽きる
+      AI_PROVIDER: ${AI_PROVIDER:-groq}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
+      # gpt-oss は思考も出力トークンに数え、それがそのまま毎分の上限に計上される
+      GROQ_REASONING_EFFORT: ${GROQ_REASONING_EFFORT:-low}
     depends_on:
       db:
         condition: service_healthy

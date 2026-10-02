@@ -43,7 +43,13 @@ services:
       KAMAHO_LOGIN_ACCOUNT: ${KAMAHO_LOGIN_ACCOUNT:-}
       KAMAHO_LOGIN_PASSWORD: ${KAMAHO_LOGIN_PASSWORD:-}
       AI_PUBLIC_ENABLED: ${AI_PUBLIC_ENABLED:-false}
-      AI_PROVIDER: ${AI_PROVIDER:-openrouter}
+      # groq を既定にする。openrouter の無料枠は50回/日で、毎回ちがうモデルに
+      # 回されるため、献立の材料を20件作るだけで尽きる
+      AI_PROVIDER: ${AI_PROVIDER:-groq}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
+      # gpt-oss は思考も出力トークンに数え、それがそのまま毎分の上限に計上される
+      GROQ_REASONING_EFFORT: ${GROQ_REASONING_EFFORT:-low}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/free}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
