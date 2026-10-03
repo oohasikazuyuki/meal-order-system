@@ -988,6 +988,14 @@ class MenuTableController extends AppController
         [, $menuCol, $ingCol, $qtyCol, $supCol, $delCol] = $cg;
         $st = \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING;
 
+        // 書式はここで当てずに貯めておき、最後にまとめて当てる。
+        // PhpSpreadsheet はセルに書式を当てるたび既存の書式一覧と照合するため、
+        // 書式の多いテンプレートでは1件あたりが重い。Dev環境(1 OCPU)では
+        // 200件で6秒かかり、献立表1枚の生成が16秒になっていた。
+        $pendingFill = [];   // [塗り色 => [セル,...]]（null は塗りなし）
+        $pendingFont = [];   // [文字色 => [セル,...]]
+        $pendingMenu = [];   // 献立名セル。太字14pt・左寄せ・中央・折り返しは全部同じ
+
         foreach ([1, 2, 3] as $mealType) {
             if (!isset($mealRows[$mealType]) || !isset($meals[$mealType])) continue;
             $startRow = $mealRows[$mealType]['start'];
@@ -1007,8 +1015,7 @@ class MenuTableController extends AppController
                     // 外食は材料を持たないのが正しいので除く。
                     if (mb_strpos($menuName, '外食') !== 0) {
                         $sheet->getCell($ingCol . $row)->setValueExplicit('材料が未登録', $st);
-                        $sheet->getStyle($ingCol . $row)->getFont()
-                            ->getColor()->setARGB('FF9A2F2F');
+                        $pendingFont['FF9A2F2F'][] = $ingCol . $row;
                     }
                     $row++;
                 } else {
@@ -1023,23 +1030,14 @@ class MenuTableController extends AppController
                         $sheet->getCell($qtyCol . $row)->setValueExplicit($qtyText, $st);
                         // 1人あたり表示は総量と読み違えると発注量を間違えるので、色を落として区別する
                         if ($isPerPerson) {
-                            $sheet->getStyle($qtyCol . $row)->getFont()
-                                ->getColor()->setARGB('FF767676');
+                            $pendingFont['FF767676'][] = $qtyCol . $row;
                         }
                         $sheet->getCell($supCol . $row)->setValueExplicit($supplierCode, $st);
                         $sheet->getCell($delCol . $row)->setValueExplicit($ing['delivery_date'], $st);
 
                         // フォント・配置は applyStaffBlockStyles でブロック単位に当て済み。
                         // ここで行ごとに変わるのは仕入先の色だけ。
-                        if ($fillColor !== null) {
-                            $sheet->getStyle($supCol . $row)->getFill()
-                                ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
-                                ->getStartColor()
-                                ->setARGB($fillColor);
-                        } else {
-                            $sheet->getStyle($supCol . $row)->getFill()
-                                ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_NONE);
-                        }
+                        $pendingFill[$fillColor ?? ''][] = $supCol . $row;
 
                         $ingNameLen = mb_strlen((string)$ing['name']);
                         $rowHeight = $ingNameLen > 10 ? self::STAFF_ROW_ING_WRAP : self::STAFF_ROW_ING;
@@ -1054,9 +1052,96 @@ class MenuTableController extends AppController
                 // 材料の行数が決まってから献立名を書く。
                 // 2行以上なら縦に結合して、どの材料がどの献立のものか一目で分かるようにする。
                 $span = max(1, $row - $menuStart);
-                $this->styleStaffMenuCell($sheet, $menuCol, $menuStart, $span, $menuName);
+                $this->styleStaffMenuCell($sheet, $menuCol, $menuStart, $span, $menuName, $pendingMenu);
             }
         }
+
+        $this->applyPendingStyles($sheet, $pendingFill, $pendingFont, $pendingMenu);
+    }
+
+    /**
+     * 貯めておいた書式を、同じ色ごとにまとめて当てる。
+     *
+     * 連続する行は 'E4:E9' のように1つの範囲にまとめる。
+     * セルを全部つないだ長い文字列を1回で渡す方法も試したが、
+     * PhpSpreadsheet 側が返ってこなくなるため、範囲ごとに分けて当てる。
+     *
+     * @param array<string, list<string>> $fills    [塗り色 => セル]。'' は塗りなし
+     * @param array<string, list<string>> $fonts    [文字色 => セル]
+     * @param list<string>                $menuCells 献立名セル
+     */
+    private function applyPendingStyles($sheet, array $fills, array $fonts, array $menuCells = []): void
+    {
+        $fillClass = \PhpOffice\PhpSpreadsheet\Style\Fill::class;
+
+        if ($menuCells !== []) {
+            $align = \PhpOffice\PhpSpreadsheet\Style\Alignment::class;
+            $menuStyle = [
+                'font'      => ['bold' => true, 'size' => 14],
+                'alignment' => [
+                    'vertical'   => $align::VERTICAL_CENTER,
+                    'horizontal' => $align::HORIZONTAL_LEFT,
+                    'wrapText'   => true,
+                ],
+            ];
+            // 献立は行を詰めて並ぶので、1食分がだいたい1つの範囲にまとまる
+            foreach ($this->compactRanges($menuCells) as $range) {
+                $sheet->getStyle($range)->applyFromArray($menuStyle);
+            }
+        }
+
+        foreach ($fills as $argb => $cells) {
+            $style = $argb === ''
+                ? ['fill' => ['fillType' => $fillClass::FILL_NONE]]
+                : ['fill' => ['fillType' => $fillClass::FILL_SOLID, 'startColor' => ['argb' => $argb]]];
+            foreach ($this->compactRanges($cells) as $range) {
+                $sheet->getStyle($range)->applyFromArray($style);
+            }
+        }
+
+        foreach ($fonts as $argb => $cells) {
+            $style = ['font' => ['color' => ['argb' => $argb]]];
+            foreach ($this->compactRanges($cells) as $range) {
+                $sheet->getStyle($range)->applyFromArray($style);
+            }
+        }
+    }
+
+    /**
+     * 同じ列で行が連続しているセルを範囲にまとめる。
+     *
+     * ['E4','E5','E6','E9'] -> ['E4:E6','E9']
+     *
+     * @param list<string> $cells
+     * @return list<string>
+     */
+    private function compactRanges(array $cells): array
+    {
+        $byCol = [];
+        foreach ($cells as $cell) {
+            if (!preg_match('/^([A-Z]+)(\d+)$/', $cell, $m)) {
+                $byCol['?'][] = $cell;
+                continue;
+            }
+            $byCol[$m[1]][] = (int)$m[2];
+        }
+
+        $out = [];
+        foreach ($byCol as $col => $rows) {
+            if ($col === '?') {
+                foreach ($rows as $raw) $out[] = $raw;
+                continue;
+            }
+            sort($rows);
+            $start = $prev = array_shift($rows);
+            foreach ($rows as $r) {
+                if ($r === $prev + 1) { $prev = $r; continue; }
+                $out[] = $start === $prev ? $col . $start : $col . $start . ':' . $col . $prev;
+                $start = $prev = $r;
+            }
+            $out[] = $start === $prev ? $col . $start : $col . $start . ':' . $col . $prev;
+        }
+        return $out;
     }
 
     /**
@@ -1069,8 +1154,14 @@ class MenuTableController extends AppController
      * @param int    $startRow 献立の先頭行
      * @param int    $span     その献立が使う行数（材料の件数）
      */
-    private function styleStaffMenuCell($sheet, string $col, int $startRow, int $span, string $menuName): void
-    {
+    private function styleStaffMenuCell(
+        $sheet,
+        string $col,
+        int $startRow,
+        int $span,
+        string $menuName,
+        array &$pendingMenu
+    ): void {
         $cell        = $col . $startRow;
         $displayName = $this->wrapMenuNameForDisplay($menuName);
 
@@ -1084,12 +1175,11 @@ class MenuTableController extends AppController
             $sheet->mergeCells($col . $startRow . ':' . $col . $endRow);
         }
 
-        $style = $sheet->getStyle($span > 1 ? $col . $startRow . ':' . $col . ($startRow + $span - 1) : $cell);
-        $style->getFont()->setBold(true)->setSize(14);
-        $style->getAlignment()
-            ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER)
-            ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_LEFT)
-            ->setWrapText(true);
+        // 書式はここで当てずに貯める。献立ごとに当てると、書式の多いテンプレート
+        // では1件あたり約28ミリ秒かかり、12日分で4秒近くになる
+        for ($r = $startRow; $r < $startRow + max(1, $span); $r++) {
+            $pendingMenu[] = $col . $r;
+        }
 
         // 1行しか使わない献立で名前が長いときだけ、折り返し用の高さを足す。
         // 結合している場合は材料の行数分の高さがあるので不要。
@@ -1334,6 +1424,7 @@ class MenuTableController extends AppController
     private function writeStaffDateRow($sheet, array $weekData, array $section, array $colGroups): void
     {
         $st = \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING;
+        $weekendFills = [];
 
         foreach ($section as $entry) {
             $date = $weekData[$entry['dayOffset']]['date'] ?? '';
@@ -1356,12 +1447,11 @@ class MenuTableController extends AppController
             } else {
                 continue;
             }
-            foreach ([$entry['dateCell'], $nameCell] as $ref) {
-                $sheet->getStyle($ref)->getFill()
-                    ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
-                    ->getStartColor()->setARGB($bg);
-            }
+            $weekendFills[$bg][] = $entry['dateCell'];
+            $weekendFills[$bg][] = $nameCell;
         }
+
+        $this->applyPendingStyles($sheet, $weekendFills, []);
     }
 
     private function formatJpDate(DateTime $dt): string
