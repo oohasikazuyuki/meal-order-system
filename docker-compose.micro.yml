@@ -29,6 +29,8 @@ services:
       DB_USER: ${MYSQL_USER}
       DB_PASS: ${MYSQL_PASSWORD}
       SECURITY_SALT: ${SECURITY_SALT:?SECURITY_SALT を .env に設定してください}
+      KAMAHO_BASE_URL: ${KAMAHO_BASE_URL:-}
+      KAMAHO_API_TOKEN: ${KAMAHO_API_TOKEN:-}
       AI_PUBLIC_ENABLED: ${AI_PUBLIC_ENABLED:-false}
       # groq を既定にする。openrouter の無料枠は50回/日で、毎回ちがうモデルに
       # 回されるため、献立の材料を20件作るだけで尽きる

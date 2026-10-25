@@ -3,8 +3,6 @@ namespace App\Controller\Api;
 
 use App\Controller\AppController;
 use App\Service\KamahoApiService;
-use App\Service\CredentialDecryptionException;
-use App\Service\KamahoCredentialResolverService;
 
 /**
  * kamaho-shokusu.jp から食数を取得するプロキシエンドポイント
@@ -15,14 +13,6 @@ use App\Service\KamahoCredentialResolverService;
  */
 class KamahoMealCountsController extends AppController
 {
-    private KamahoCredentialResolverService $kamahoCredentialResolverService;
-
-    public function initialize(): void
-    {
-        parent::initialize();
-        $this->kamahoCredentialResolverService = new KamahoCredentialResolverService();
-    }
-
     /** GET /api/kamaho-meal-counts.json */
     public function index(): void
     {
@@ -41,8 +31,7 @@ class KamahoMealCountsController extends AppController
         }
 
         try {
-            $options = $this->kamahoCredentialResolverService->resolveKamahoOptions($this->request);
-            $counts  = (new KamahoApiService($options))->getMealCountsByDate($date);
+            $counts = (new KamahoApiService())->getMealCountsByDate($date);
 
             $this->set([
                 'ok'     => true,
@@ -51,13 +40,6 @@ class KamahoMealCountsController extends AppController
                 'counts' => $counts,
             ]);
             $this->viewBuilder()->setOption('serialize', ['ok', 'date', 'user', 'counts']);
-        } catch (CredentialDecryptionException $e) {
-            $this->response = $this->response->withStatus(409);
-            $this->set([
-                'ok' => false,
-                'message' => '保存されている連携情報を読み取れませんでした。連携をやり直してください。',
-            ]);
-            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
         } catch (\Throwable $e) {
             $this->response = $this->response->withStatus(502);
             $this->set([

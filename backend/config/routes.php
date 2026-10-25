@@ -34,12 +34,12 @@ return static function (RouteBuilder $routes): void {
         $routes->resources('Users', ['only' => ['index', 'create', 'update', 'delete']]);
 
         // 部屋: kamaho同期カスタムルートを先に定義
-        $routes->connect('/rooms/kamaho-login', ['controller' => 'Rooms', 'action' => 'kamahoLogin'], ['_method' => 'POST']);
         $routes->connect('/rooms/sync-kamaho', ['controller' => 'Rooms', 'action' => 'syncKamaho'], ['_method' => 'POST']);
         $routes->resources('Rooms', ['only' => ['index', 'create', 'delete']]);
 
         $routes->resources('Blocks', ['only' => ['index', 'create', 'delete']]);
 
+        $routes->connect('/block-order-quantities/import-kamaho', ['controller' => 'BlockOrderQuantities', 'action' => 'importKamaho'], ['_method' => 'POST']);
         $routes->resources('BlockOrderQuantities', ['only' => ['index', 'create']]);
 
         $routes->resources('MenuIngredients', ['only' => ['index', 'create']]);

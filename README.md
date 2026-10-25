@@ -29,8 +29,7 @@ docker compose --env-file .env -p meal1 up -d --build
 ```bash
 cat > .env.instance2 <<'EOF'
 KAMAHO_BASE_URL=https://kamaho-shokusu.jp/kamaho-shokusu
-KAMAHO_LOGIN_ACCOUNT=your_account
-KAMAHO_LOGIN_PASSWORD=your_password
+KAMAHO_API_TOKEN=your_token
 MYSQL_ROOT_PASSWORD=rootpass
 MYSQL_DATABASE=meal_order_db
 MYSQL_USER=cake_user
