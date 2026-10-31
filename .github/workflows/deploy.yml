@@ -90,6 +90,21 @@ jobs:
           scp -i ~/.ssh/deploy deploy/apply-https-to-compose.sh "$TARGET:~/meal-order/deploy/"
           ssh -i ~/.ssh/deploy "$TARGET" 'cd ~/meal-order && bash deploy/apply-https-to-compose.sh'
 
+      # DB の毎日バックアップ。cron の行は毎回入れ替えるので重複しない。
+      # サーバーは UTC なので 18:30 = 日本時間 03:30
+      - name: DBバックアップを cron に登録
+        env:
+          TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+        run: |
+          scp -i ~/.ssh/deploy deploy/backup-db.sh "$TARGET:~/meal-order/deploy/"
+          ssh -i ~/.ssh/deploy "$TARGET" bash -s <<'REMOTE'
+          set -euo pipefail
+          mkdir -p ~/meal-order/backups && chmod 700 ~/meal-order/backups
+          line='30 18 * * * bash $HOME/meal-order/deploy/backup-db.sh >> $HOME/meal-order/backups/backup.log 2>&1'
+          { crontab -l 2>/dev/null | grep -vF 'deploy/backup-db.sh' || true; echo "$line"; } | crontab -
+          crontab -l | grep -F 'deploy/backup-db.sh'
+          REMOTE
+
       - name: 新しいイメージに入れ替えて起動
         run: |
           ssh -i ~/.ssh/deploy "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" bash -s <<'REMOTE'
