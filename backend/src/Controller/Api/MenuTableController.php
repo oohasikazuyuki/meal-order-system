@@ -10,6 +10,7 @@ use ZipArchive;
 use DOMDocument;
 use DateTime;
 use Cake\Log\Log;
+use Cake\Database\Expression\QueryExpression;
 
 /**
  * 献立表 API
@@ -796,10 +797,13 @@ class MenuTableController extends AppController
         };
 
         // has_order_sheet = 1 の業者を取得
-        $conn      = $this->Menus->getConnection();
-        $suppliers = $conn->execute(
-            "SELECT id, code, name, delivery_days, order_day FROM suppliers WHERE has_order_sheet = 1 ORDER BY id"
-        )->fetchAll('assoc');
+        $suppliers = $this->fetchTable('Suppliers')->find()
+            ->select(['id', 'code', 'name', 'delivery_days', 'order_day'])
+            ->where(['has_order_sheet' => 1])
+            ->orderBy(['id' => 'ASC'])
+            ->disableHydration()
+            ->disableResultsCasting()
+            ->toArray();
 
         // ヘッダー行 (行40)
         $row = 40;
@@ -1234,49 +1238,51 @@ class MenuTableController extends AppController
     // ----------------------------------------
     private function getWeekMenuData(DateTime $weekStart, DateTime $weekEnd, int $dayCount = 7): array
     {
-        $conn = $this->Menus->getConnection();
+        $start = $weekStart->format('Y-m-d');
+        $end   = $weekEnd->format('Y-m-d');
 
-        $rows = $conn->execute("
-            SELECT
-                m.menu_date,
-                m.meal_type,
-                m.name      AS menu_name,
-                m.block_id,
-                mi.name     AS ingredient_name,
-                mi.unit,
-                mi.sort_order,
-                mi.amount   AS per_person,
-                mi.persons_per_unit,
-                COALESCE(s.id,   0)  AS supplier_id,
-                COALESCE(s.code, '') AS supplier_code,
-                COALESCE(s.delivery_days, '') AS delivery_days,
-                SUM(COALESCE(boq.order_quantity, 0)) AS head_count,
-                SUM(mi.amount * COALESCE(boq.order_quantity, 0)) AS total_amount
-            FROM menus m
-            JOIN menu_masters mm
-              ON mm.name = m.name
-             AND (mm.block_id = m.block_id OR mm.block_id IS NULL)
-            JOIN menu_ingredients mi
-              ON mi.menu_master_id = mm.id
-             AND mi.name != ''
-            LEFT JOIN suppliers s ON s.id = mi.supplier_id
-            LEFT JOIN block_order_quantities boq
-              ON boq.order_date = m.menu_date
-             AND boq.block_id   = m.block_id
-             AND boq.meal_type  = m.meal_type
-            WHERE m.menu_date BETWEEN :start AND :end
-            GROUP BY m.menu_date, m.meal_type, m.name, m.block_id,
-                     mi.name, mi.unit, mi.sort_order, mi.amount, mi.persons_per_unit,
-                     s.id, s.code, s.delivery_days
-            ORDER BY m.menu_date, m.meal_type, m.name, mi.sort_order
-        ", ['start' => $weekStart->format('Y-m-d'), 'end' => $weekEnd->format('Y-m-d')])->fetchAll('assoc');
+        $query = $this->Menus->find('withMaster')->find('withOrderQuantity');
+        $func  = $query->func();
+        $rows  = $query
+            ->select([
+                'menu_date'        => 'Menus.menu_date',
+                'meal_type'        => 'Menus.meal_type',
+                'menu_name'        => 'Menus.name',
+                'block_id'         => 'Menus.block_id',
+                'ingredient_name'  => 'mi.name',
+                'unit'             => 'mi.unit',
+                'sort_order'       => 'mi.sort_order',
+                'per_person'       => 'mi.amount',
+                'persons_per_unit' => 'mi.persons_per_unit',
+                'supplier_id'      => $func->coalesce(['s.id' => 'identifier', 0], [0 => 'integer']),
+                'supplier_code'    => $func->coalesce(['s.code' => 'identifier', ''], [0 => 'string']),
+                'delivery_days'    => $func->coalesce(['s.delivery_days' => 'identifier', ''], [0 => 'string']),
+                'head_count'       => $func->sum($this->Menus->orderQuantity($query)),
+                'total_amount'     => $func->sum($this->Menus->ingredientAmount($query)),
+            ])
+            ->innerJoin(['mi' => 'menu_ingredients'], fn(QueryExpression $exp) => $exp
+                ->equalFields('mi.menu_master_id', 'mm.id')
+                ->notEq('mi.name', '', 'string'))
+            ->leftJoin(['s' => 'suppliers'], fn(QueryExpression $exp) => $exp->equalFields('s.id', 'mi.supplier_id'))
+            ->where(fn(QueryExpression $exp) => $exp->between('Menus.menu_date', $start, $end))
+            ->groupBy([
+                'Menus.menu_date', 'Menus.meal_type', 'Menus.name', 'Menus.block_id',
+                'mi.name', 'mi.unit', 'mi.sort_order', 'mi.amount', 'mi.persons_per_unit',
+                's.id', 's.code', 's.delivery_days',
+            ])
+            ->orderBy(['Menus.menu_date' => 'ASC', 'Menus.meal_type' => 'ASC', 'Menus.name' => 'ASC', 'mi.sort_order' => 'ASC'])
+            ->disableHydration()
+            ->disableResultsCasting()
+            ->toArray();
 
-        $menuRows = $conn->execute("
-            SELECT DISTINCT menu_date, meal_type, name AS menu_name
-            FROM menus
-            WHERE menu_date BETWEEN :start AND :end
-            ORDER BY menu_date, meal_type, name
-        ", ['start' => $weekStart->format('Y-m-d'), 'end' => $weekEnd->format('Y-m-d')])->fetchAll('assoc');
+        $menuRows = $this->Menus->find()
+            ->select(['menu_date', 'meal_type', 'menu_name' => 'name'])
+            ->distinct()
+            ->where(fn(QueryExpression $exp) => $exp->between('menu_date', $start, $end))
+            ->orderBy(['menu_date' => 'ASC', 'meal_type' => 'ASC', 'name' => 'ASC'])
+            ->disableHydration()
+            ->disableResultsCasting()
+            ->toArray();
 
         // メニュー存在マップ: [date][meal_type][menu_name] = true
         $menuTree = [];

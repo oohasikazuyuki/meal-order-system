@@ -1,4 +1,5 @@
 import axios, { InternalAxiosRequestConfig } from 'axios';
+import { clearAuth } from '../auth';
 
 const client = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost/api',
@@ -62,6 +63,18 @@ client.interceptors.response.use((response) => {
     }
   }
   return response;
+}, (error) => {
+  // トークン切れ・取り消し。ログイン画面へ戻す（ログイン自体の失敗は画面側で表示する）
+  if (
+    typeof window !== 'undefined'
+    && axios.isAxiosError(error)
+    && error.response?.status === 401
+    && !error.config?.url?.startsWith('/auth/login')
+  ) {
+    clearAuth();
+    window.location.href = '/login';
+  }
+  return Promise.reject(error);
 });
 
 export default client;
@@ -100,15 +113,6 @@ export const fetchUsers = () => client.get<{ ok: boolean; users: UserRecord[] }>
 export const createUser = (data: UserInput) => withCacheClear(client.post<{ ok: boolean; user: UserRecord }>('/users', data));
 export const updateUser = (id: number, data: Partial<UserInput>) => withCacheClear(client.put<{ ok: boolean; user: UserRecord }>(`/users/${id}`, data));
 export const deleteUser = (id: number) => withCacheClear(client.delete(`/users/${id}`));
-
-// --- Orders ---
-export const fetchOrders = () => client.get('/orders');
-export const fetchOrderSummary = (date: string) =>
-  client.get(`/orders/summary?date=${date}`);
-export const createOrder = (data: OrderInput) => withCacheClear(client.post('/orders', data));
-export const updateOrder = (id: number, data: Partial<OrderInput>) =>
-  withCacheClear(client.put(`/orders/${id}`, data));
-export const deleteOrder = (id: number) => withCacheClear(client.delete(`/orders/${id}`));
 
 // --- Menus ---
 export const fetchMenus = (date?: string) =>
@@ -294,14 +298,6 @@ export interface UserInput {
   kamaho_password?: string;
   role: 'admin' | 'user';
   block_id?: number | null;
-}
-
-export interface OrderInput {
-  user_id: number;
-  menu_id: number;
-  quantity: number;
-  order_date: string;
-  note?: string;
 }
 
 export interface MenuInput {
