@@ -202,6 +202,52 @@ class CoreFlowsTest extends TestCase
     // ── helpers ────────────────────────────────────────────────
 
     /** 2ブロックが同じ日の夕食にカレーを出す。返り値は仕入先ID */
+    // ── 生協発注 ────────────────────────────────────────────────
+
+    public function testCoopWeeklyOrderSavedTwiceStaysOneRow(): void
+    {
+        $itemId = $this->insert('coop_items', ['name' => '牛乳', 'unit' => '本', 'order_type' => 'weekly', 'sort_order' => 1]);
+
+        foreach ([[3, '朝'], [5, '朝と夕']] as [$qty, $notes]) {
+            $this->postJson('/api/coop-orders.json', [
+                'week_start' => '2030-01-07',
+                'items' => [['item_id' => $itemId, 'quantity' => $qty, 'notes' => $notes, 'order_code' => ' A-1 ']],
+            ]);
+            $this->assertResponseOk();
+        }
+
+        // order_date が NULL の週次行でも上書きになり、2行に増えない
+        $rows = $this->conn->execute('SELECT quantity, notes FROM coop_orders WHERE item_id = ?', [$itemId])->fetchAll('assoc');
+        $this->assertSame([['quantity' => 5, 'notes' => '朝と夕']], $this->intify($rows, 'quantity'));
+
+        $this->apiGet('/api/coop-orders.json?week_start=2030-01-07');
+        $item = json_decode((string)$this->_response->getBody(), true)['items'][0];
+        $this->assertSame([5, '朝と夕', 'A-1'], [$item['quantity'], $item['notes'], $item['order_code']]);
+    }
+
+    public function testCoopDailyOrderReturnsPerDate(): void
+    {
+        $itemId = $this->insert('coop_items', ['name' => '豆腐', 'unit' => '丁', 'order_type' => 'daily', 'sort_order' => 1]);
+
+        $this->postJson('/api/coop-orders.json', [
+            'week_start' => '2030-01-07',
+            'items' => [['item_id' => $itemId, 'daily' => ['2030-01-07' => 2, '2030-01-09' => 4, 'bad' => 9]]],
+        ]);
+        $this->assertResponseOk();
+        $this->postJson('/api/coop-orders.json', [
+            'week_start' => '2030-01-07',
+            'items' => [['item_id' => $itemId, 'daily' => ['2030-01-09' => 6]]],
+        ]);
+        $this->assertResponseOk();
+
+        $this->apiGet('/api/coop-orders.json?week_start=2030-01-07');
+        $daily = json_decode((string)$this->_response->getBody(), true)['items'][0]['daily'];
+        $this->assertSame(2, $daily['2030-01-07']);
+        $this->assertSame(6, $daily['2030-01-09']);
+        $this->assertSame(0, $daily['2030-01-08']);
+        $this->assertCount(7, $daily);
+    }
+
     private function seedSharedMenu(string $date): int
     {
         $supplierId = $this->insert('suppliers', ['name' => 'テスト業者', 'code' => 'T', 'delivery_days' => '0']);

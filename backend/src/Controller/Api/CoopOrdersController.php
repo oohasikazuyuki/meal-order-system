@@ -2,6 +2,7 @@
 namespace App\Controller\Api;
 
 use App\Controller\AppController;
+use Cake\I18n\DateTime as CakeDateTime;
 use DateTime;
 
 /**
@@ -19,10 +20,14 @@ use DateTime;
  */
 class CoopOrdersController extends AppController
 {
+    protected \App\Model\Table\CoopItemsTable $CoopItems;
+    protected \App\Model\Table\CoopOrdersTable $CoopOrders;
+
     public function initialize(): void
     {
         parent::initialize();
-        $this->CoopItems = $this->fetchTable('CoopItems');
+        $this->CoopItems  = $this->fetchTable('CoopItems');
+        $this->CoopOrders = $this->fetchTable('CoopOrders');
     }
 
     /** GET /api/coop-orders/items.json */
@@ -61,13 +66,12 @@ class CoopOrdersController extends AppController
         $itemRows = $this->CoopItems->find()->orderBy(['sort_order' => 'ASC'])->toArray();
 
         // 保存済み発注データ
-        $conn   = $this->CoopItems->getConnection();
-        $orders = $conn->execute(
-            "SELECT item_id, order_date, quantity, notes
-             FROM coop_orders
-             WHERE week_start = :ws",
-            ['ws' => $weekStartStr]
-        )->fetchAll('assoc');
+        $orders = $this->CoopOrders->find()
+            ->select(['item_id', 'order_date', 'quantity', 'notes'])
+            ->where(['week_start' => $weekStartStr])
+            ->disableHydration()
+            ->disableResultsCasting()
+            ->toArray();
 
         // item_id => [order_date => {quantity, notes}]
         $orderMap = [];
@@ -135,50 +139,60 @@ class CoopOrdersController extends AppController
             return;
         }
 
-        $conn  = $this->CoopItems->getConnection();
         $saved = 0;
 
-        foreach ((array)$items as $item) {
-            $itemId = (int)($item['item_id'] ?? 0);
-            if (!$itemId) continue;
+        // 途中で失敗したとき、品目の一部だけ保存された状態を残さない
+        $this->CoopOrders->getConnection()->transactional(function () use ($items, $weekStart, &$saved) {
+            foreach ((array)$items as $item) {
+                $itemId = (int)($item['item_id'] ?? 0);
+                if (!$itemId) continue;
 
-            // 注文コードは品目マスタ側の情報だが、週の数量と同じ画面で直すので
-            // 同じ保存操作で拾う。現場に保存ボタンを2つ押させない。
-            if (array_key_exists('order_code', $item)) {
-                $code = trim((string)$item['order_code']);
-                $conn->execute(
-                    'UPDATE coop_items SET order_code = :code, modified = NOW() WHERE id = :id',
-                    ['code' => $code !== '' ? $code : null, 'id' => $itemId]
-                );
-            }
-
-            if (!empty($item['daily']) && is_array($item['daily'])) {
-                // 日別保存
-                foreach ($item['daily'] as $date => $qty) {
-                    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$date)) continue;
-                    $conn->execute(
-                        "INSERT INTO coop_orders (week_start, item_id, order_date, quantity)
-                         VALUES (:ws, :iid, :od, :qty)
-                         ON DUPLICATE KEY UPDATE quantity = VALUES(quantity), modified = NOW()",
-                        ['ws' => $weekStart, 'iid' => $itemId, 'od' => $date, 'qty' => (int)$qty]
+                // 注文コードは品目マスタ側の情報だが、週の数量と同じ画面で直すので
+                // 同じ保存操作で拾う。現場に保存ボタンを2つ押させない。
+                if (array_key_exists('order_code', $item)) {
+                    $code = trim((string)$item['order_code']);
+                    $this->CoopItems->updateAll(
+                        ['order_code' => $code !== '' ? $code : null, 'modified' => CakeDateTime::now()],
+                        ['id' => $itemId]
                     );
+                }
+
+                if (!empty($item['daily']) && is_array($item['daily'])) {
+                    // 日別保存
+                    foreach ($item['daily'] as $date => $qty) {
+                        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$date)) continue;
+                        $this->upsertOrder($weekStart, $itemId, (string)$date, ['quantity' => (int)$qty]);
+                        $saved++;
+                    }
+                } else {
+                    // 週次保存（order_date は NULL）
+                    $this->upsertOrder($weekStart, $itemId, null, [
+                        'quantity' => (int)($item['quantity'] ?? 0),
+                        'notes'    => (string)($item['notes'] ?? ''),
+                    ]);
                     $saved++;
                 }
-            } else {
-                // 週次保存
-                $qty   = (int)($item['quantity'] ?? 0);
-                $notes = (string)($item['notes'] ?? '');
-                $conn->execute(
-                    "INSERT INTO coop_orders (week_start, item_id, order_date, quantity, notes)
-                     VALUES (:ws, :iid, NULL, :qty, :notes)
-                     ON DUPLICATE KEY UPDATE quantity = VALUES(quantity), notes = VALUES(notes), modified = NOW()",
-                    ['ws' => $weekStart, 'iid' => $itemId, 'qty' => $qty, 'notes' => $notes]
-                );
-                $saved++;
             }
-        }
+        });
 
         $this->set(['ok' => true, 'saved' => $saved]);
         $this->viewBuilder()->setOption('serialize', ['ok', 'saved']);
+    }
+
+    /**
+     * (week_start, item_id, order_date) の行があれば更新、なければ追加する。
+     * order_date が NULL の週次行も、一意キーは生成列 order_date_norm で効いている。
+     */
+    private function upsertOrder(string $weekStart, int $itemId, ?string $orderDate, array $fields): void
+    {
+        $entity = $this->CoopOrders->find()
+            ->where(['week_start' => $weekStart, 'item_id' => $itemId, 'order_date IS' => $orderDate])
+            ->first()
+            ?? $this->CoopOrders->newEntity(
+                ['week_start' => $weekStart, 'item_id' => $itemId, 'order_date' => $orderDate],
+                ['accessibleFields' => ['*' => true]]
+            );
+        $this->CoopOrders->patchEntity($entity, $fields, ['accessibleFields' => ['*' => true]]);
+        $this->CoopOrders->saveOrFail($entity);
     }
 }
