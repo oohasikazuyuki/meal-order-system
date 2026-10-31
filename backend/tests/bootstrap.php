@@ -1,30 +1,29 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/../vendor/autoload.php';
+use Cake\Core\Configure;
+use Cake\Datasource\ConnectionManager;
+use Cake\TestSuite\ConnectionHelper;
 
-// CakePHP定数（テスト環境用）
-if (!defined('CONFIG')) {
-    define('CONFIG', __DIR__ . '/../config/');
+require dirname(__DIR__) . '/config/paths.php';
+require ROOT . DS . 'vendor' . DS . 'autoload.php';
+
+foreach ([CACHE . 'models', CACHE . 'persistent', LOGS] as $dir) {
+    if (!is_dir($dir)) {
+        mkdir($dir, 0777, true);
+    }
 }
-if (!defined('ROOT')) {
-    define('ROOT', dirname(__DIR__));
+
+Configure::write('App.namespace', 'App');
+require CONFIG . 'bootstrap.php';
+
+// 手元で別ポートのMySQLを使うとき用（CIは3306のまま）
+if (getenv('DB_PORT')) {
+    $config = ConnectionManager::getConfig('test');
+    ConnectionManager::drop('test');
+    ConnectionManager::setConfig('test', ['port' => getenv('DB_PORT')] + $config);
 }
-if (!defined('APP')) {
-    define('APP', __DIR__ . '/../src/');
-}
-if (!defined('WWW_ROOT')) {
-    define('WWW_ROOT', __DIR__ . '/../webroot/');
-}
-if (!defined('LOGS')) {
-    define('LOGS', __DIR__ . '/../logs/');
-}
-if (!defined('TMP')) {
-    define('TMP', __DIR__ . '/../tmp/');
-}
-if (!defined('CACHE')) {
-    define('CACHE', TMP . 'cache/');
-}
-if (!defined('DS')) {
-    define('DS', DIRECTORY_SEPARATOR);
-}
+
+// アプリの 'default' 接続をテスト用DB（DB_NAME + '_test'）に向ける。
+// 実際に接続するのはDBに触るテストだけ
+ConnectionHelper::addTestAliases();
