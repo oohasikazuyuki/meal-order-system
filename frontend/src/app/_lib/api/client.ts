@@ -114,15 +114,6 @@ export const createUser = (data: UserInput) => withCacheClear(client.post<{ ok: 
 export const updateUser = (id: number, data: Partial<UserInput>) => withCacheClear(client.put<{ ok: boolean; user: UserRecord }>(`/users/${id}`, data));
 export const deleteUser = (id: number) => withCacheClear(client.delete(`/users/${id}`));
 
-// --- Orders ---
-export const fetchOrders = () => client.get('/orders');
-export const fetchOrderSummary = (date: string) =>
-  client.get(`/orders/summary?date=${date}`);
-export const createOrder = (data: OrderInput) => withCacheClear(client.post('/orders', data));
-export const updateOrder = (id: number, data: Partial<OrderInput>) =>
-  withCacheClear(client.put(`/orders/${id}`, data));
-export const deleteOrder = (id: number) => withCacheClear(client.delete(`/orders/${id}`));
-
 // --- Menus ---
 export const fetchMenus = (date?: string) =>
   client.get<{ menus: MenuItem[] }>(`/menus${date ? `?date=${date}` : ''}`);
@@ -307,14 +298,6 @@ export interface UserInput {
   kamaho_password?: string;
   role: 'admin' | 'user';
   block_id?: number | null;
-}
-
-export interface OrderInput {
-  user_id: number;
-  menu_id: number;
-  quantity: number;
-  order_date: string;
-  note?: string;
 }
 
 export interface MenuInput {

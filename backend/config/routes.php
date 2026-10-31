@@ -8,17 +8,6 @@ return static function (RouteBuilder $routes): void {
     $routes->prefix('Api', function (RouteBuilder $routes): void {
         $routes->setExtensions(['json']);
 
-        $routes->resources('Orders', [
-            'only' => ['index', 'create', 'update', 'delete'],
-            'map'  => [
-                'summary' => [
-                    'action' => 'summary',
-                    'method' => 'GET',
-                    'path'   => 'summary',
-                ],
-            ],
-        ]);
-
         $routes->connect('/menus/copy-routine', ['controller' => 'Menus', 'action' => 'copyRoutine'], ['_method' => 'POST']);
         $routes->connect('/menus/schedule-routine', ['controller' => 'Menus', 'action' => 'scheduleRoutine'], ['_method' => 'POST']);
         $routes->resources('Menus', ['only' => ['index', 'create', 'delete']]);
@@ -56,8 +45,6 @@ return static function (RouteBuilder $routes): void {
         $routes->connect('/order-sheets/inventory',  ['controller' => 'OrderSheets', 'action' => 'inventory'],  ['_method' => 'GET']);
         $routes->connect('/order-sheets/download',  ['controller' => 'OrderSheets', 'action' => 'download'],  ['_method' => ['GET', 'POST']]);
         $routes->connect('/order-sheets/pdf',       ['controller' => 'OrderSheets', 'action' => 'pdf'],       ['_method' => ['GET', 'POST']]);
-
-        $routes->resources('OrderSheetLogs', ['only' => ['index']]);
 
         // 生協発注
         $routes->connect('/coop-orders/items', ['controller' => 'CoopOrders', 'action' => 'items'], ['_method' => 'GET']);
