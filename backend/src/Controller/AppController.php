@@ -7,25 +7,72 @@ use Cake\Event\EventInterface;
 
 class AppController extends Controller
 {
-    protected function requireAuthenticatedUser(): ?array
-    {
-        $authService = new AuthService();
-        $token = $authService->extractBearerToken(
-            $this->request->getHeaderLine('Authorization')
-        );
-        $result = $authService->getAuthenticatedUser($token);
+    /**
+     * ログインなしで呼べる操作（"Controller.action"）。ここ以外は全部ログイン必須。
+     * logout はトークン切れでも端末側のログアウトを妨げないために開けておく。
+     */
+    private const PUBLIC_ACTIONS = [
+        'Auth.login',
+        'Auth.logout',
+    ];
 
-        if (!$result['success']) {
-            $this->response = $this->response->withStatus($result['status']);
-            $this->set([
-                'ok' => false,
-                'message' => $result['message'],
-            ]);
-            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
-            return null;
+    /** beforeFilter で確認したログイン中のユーザー */
+    protected ?array $authUser = null;
+
+    protected function authService(): AuthService
+    {
+        return new AuthService();
+    }
+
+    public function beforeFilter(EventInterface $event): void
+    {
+        parent::beforeFilter($event);
+
+        $key = $this->request->getParam('controller') . '.' . $this->request->getParam('action');
+        if (in_array($key, self::PUBLIC_ACTIONS, true)) {
+            return;
         }
 
-        return $result['user'];
+        $authService = $this->authService();
+        $result = $authService->getAuthenticatedUser(
+            $authService->extractBearerToken($this->request->getHeaderLine('Authorization'))
+        );
+        if (!$result['success']) {
+            $event->setResult($this->jsonError($result['status'], $result['message']));
+            $event->stopPropagation();
+            return;
+        }
+
+        $this->authUser = $result['user'];
+    }
+
+    /**
+     * 管理者だけに許す操作の入口で呼ぶ。管理者でなければ 403 を返して止める。
+     */
+    protected function requireAdmin(EventInterface $event): void
+    {
+        if ($event->isStopped() || ($this->authUser['role'] ?? null) === 'admin') {
+            return;
+        }
+        $event->setResult($this->jsonError(403, '管理者のみ操作できます'));
+        $event->stopPropagation();
+    }
+
+    /**
+     * ログイン確認は beforeFilter で済んでいる。ここは確認済みのユーザーを返すだけ。
+     */
+    protected function requireAuthenticatedUser(): ?array
+    {
+        return $this->authUser;
+    }
+
+    private function jsonError(int $status, string $message): \Cake\Http\Response
+    {
+        return $this->response
+            ->withStatus($status)
+            ->withType('application/json')
+            ->withCharset('utf-8')
+            ->withStringBody((string)json_encode(['ok' => false, 'message' => $message], JSON_UNESCAPED_UNICODE));
     }
 
     public function initialize(): void
