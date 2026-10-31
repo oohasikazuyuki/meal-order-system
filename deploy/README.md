@@ -96,8 +96,40 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod exec backend php 
 ## まだ無いもの
 
 - **HTTPS**。いまは http のみ。Let's Encrypt か OCI のロードバランサ（無料枠 10Mbps）
-- バックアップ。MySQL のダンプを定期取得する仕組み
 - デプロイの自動化
+- **バックアップのサーバー外への退避**。下記のとおりダンプは同じ機械の中にしか無い
+
+## バックアップ
+
+毎日 03:30（日本時間）に `deploy/backup-db.sh` が MySQL をダンプします。
+cron の登録はデプロイ（`deploy.yml`）が毎回やり直すので、手で入れる必要はありません。
+
+| | |
+|---|---|
+| 保存先 | `~/meal-order/backups/meal_order_db-YYYYmmdd-HHMM.sql.gz` |
+| 保持 | 14日（`KEEP_DAYS` で変更） |
+| ログ | `~/meal-order/backups/backup.log` |
+| 手動で取る | `bash ~/meal-order/deploy/backup-db.sh` |
+
+**同じ機械のディスクにしか置いていません。** インスタンスごと消えれば
+バックアップも消えます。次の一手は OCI Object Storage（無料枠 20GB）への転送です。
+
+### 戻し方
+
+```bash
+cd ~/meal-order
+ls -lt backups/                                   # 戻すファイルを選ぶ
+f=backups/meal_order_db-20261031-0330.sql.gz
+
+bash deploy/backup-db.sh                           # 念のため今の状態も取っておく
+docker compose stop backend                        # 戻している間に書き込ませない
+gunzip -c "$f" | docker compose exec -T db sh -c \
+  'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -uroot "$MYSQL_DATABASE"'
+docker compose start backend
+```
+
+ダンプは各テーブルを `DROP TABLE` してから作り直すので、そのまま上書きされます。
+（ダンプより後に作られたテーブルは残ります。）
 
 ## 扱うデータについて
 
