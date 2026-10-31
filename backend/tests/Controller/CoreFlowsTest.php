@@ -248,6 +248,41 @@ class CoreFlowsTest extends TestCase
         $this->assertCount(7, $daily);
     }
 
+    // ── 認証 ────────────────────────────────────────────────────
+
+    public function testExpiredTokenIsRejected(): void
+    {
+        $this->conn->execute(
+            "UPDATE users SET api_token_expires_at = '2000-01-01 00:00:00' WHERE login_id = 'core-flows'"
+        );
+        $this->apiGet('/api/blocks.json');
+        $this->assertResponseCode(401);
+    }
+
+    /** 管理者がゼロになると利用者管理を誰も開けなくなる */
+    public function testLastAdminCannotBeDeletedOrDemoted(): void
+    {
+        $this->conn->execute("UPDATE users SET role = 'user' WHERE login_id <> 'core-flows'");
+        $me = (int)$this->conn->execute("SELECT id FROM users WHERE login_id = 'core-flows'")->fetchColumn(0);
+
+        $this->authHeaders();
+        $this->delete("/api/users/{$me}.json");
+        $this->assertResponseCode(409);
+
+        $this->authHeaders(['Content-Type' => 'application/json']);
+        $this->put("/api/users/{$me}.json", json_encode(['role' => 'user']));
+        $this->assertResponseCode(409);
+
+        // もう1人管理者がいれば削除できる
+        $other = $this->insert('users', [
+            'name' => '別の管理者', 'email' => 'o@example.com', 'login_id' => 'other-admin',
+            'password' => 'x', 'role' => 'admin',
+        ]);
+        $this->authHeaders();
+        $this->delete("/api/users/{$other}.json");
+        $this->assertResponseOk();
+    }
+
     private function seedSharedMenu(string $date): int
     {
         $supplierId = $this->insert('suppliers', ['name' => 'テスト業者', 'code' => 'T', 'delivery_days' => '0']);

@@ -64,9 +64,14 @@ class UsersController extends AppController
         $result = $this->userService->updateUser($id, $this->request->getData());
 
         if (!$result['success']) {
-            $this->response = $this->response->withStatus(400);
-            $this->set(['ok' => false, 'errors' => $result['errors']]);
-            $this->viewBuilder()->setOption('serialize', ['ok', 'errors']);
+            $this->response = $this->response->withStatus($result['status'] ?? 400);
+            if (isset($result['message'])) {
+                $this->set(['ok' => false, 'message' => $result['message']]);
+                $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+            } else {
+                $this->set(['ok' => false, 'errors' => $result['errors']]);
+                $this->viewBuilder()->setOption('serialize', ['ok', 'errors']);
+            }
             return;
         }
 
@@ -76,7 +81,13 @@ class UsersController extends AppController
 
     public function delete(int $id): void
     {
-        $this->userService->deleteUser($id);
+        $result = $this->userService->deleteUser($id);
+        if (!$result['success']) {
+            $this->response = $this->response->withStatus($result['status']);
+            $this->set(['ok' => false, 'message' => $result['message']]);
+            $this->viewBuilder()->setOption('serialize', ['ok', 'message']);
+            return;
+        }
         $this->set(['ok' => true]);
         $this->viewBuilder()->setOption('serialize', ['ok']);
     }
