@@ -3,6 +3,7 @@ namespace App\Controller\Api;
 
 use App\Controller\AppController;
 use App\Service\UserService;
+use Cake\Event\EventInterface;
 
 /**
  * ユーザー管理 API
@@ -11,6 +12,8 @@ use App\Service\UserService;
  * POST   /api/users.json       → 新規作成
  * PUT    /api/users/:id.json   → 更新
  * DELETE /api/users/:id.json   → 削除
+ *
+ * 全操作とも管理者のみ（一覧も他の利用者のログインIDが見えるため）
  */
 class UsersController extends AppController
 {
@@ -20,6 +23,12 @@ class UsersController extends AppController
     {
         parent::initialize();
         $this->userService = new UserService();
+    }
+
+    public function beforeFilter(EventInterface $event): void
+    {
+        parent::beforeFilter($event);
+        $this->requireAdmin($event);
     }
 
     public function index(): void

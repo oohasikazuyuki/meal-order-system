@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { isAxiosError } from 'axios'
 import ConfirmDialog from '../_components/ConfirmDialog'
 import ErrorNotice from '../_components/ErrorNotice'
 import { generatePassword, validateLoginId } from '../_lib/password'
@@ -38,8 +39,12 @@ export default function UsersPage() {
     try {
       const res = await fetchUsers()
       setUsers(res.data.users)
-    } catch {
-      setLoadError('利用者一覧を読み込めませんでした。通信を確認してください。')
+    } catch (e) {
+      setLoadError(
+        isAxiosError(e) && e.response?.status === 403
+          ? '利用者の管理は管理者だけが使えます。'
+          : '利用者一覧を読み込めませんでした。通信を確認してください。'
+      )
     } finally {
       setLoading(false)
     }

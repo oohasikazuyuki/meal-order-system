@@ -118,12 +118,13 @@ jobs:
 
       - name: 動いているか確かめる
         run: |
-          # 起動直後は 502 になることがあるので少し待つ
+          # 起動直後は 502 になることがあるので少し待つ。
+          # API はログイン必須なので、トークンなしなら 401 が正常（502/500 でないことを見る）
           for i in $(seq 1 12); do
             code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "${{ secrets.PUBLIC_BASE_URL }}/login" || echo 000)
             api=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "${{ secrets.PUBLIC_BASE_URL }}/api/blocks" || echo 000)
             echo "  試行 $i: ログイン画面=$code API=$api"
-            if [ "$code" = "200" ] && [ "$api" = "200" ]; then
+            if [ "$code" = "200" ] && [ "$api" = "401" ]; then
               echo "デプロイ成功"
               exit 0
             fi

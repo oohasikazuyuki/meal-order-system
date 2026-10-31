@@ -1,4 +1,5 @@
 import axios, { InternalAxiosRequestConfig } from 'axios';
+import { clearAuth } from '../auth';
 
 const client = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost/api',
@@ -62,6 +63,18 @@ client.interceptors.response.use((response) => {
     }
   }
   return response;
+}, (error) => {
+  // トークン切れ・取り消し。ログイン画面へ戻す（ログイン自体の失敗は画面側で表示する）
+  if (
+    typeof window !== 'undefined'
+    && axios.isAxiosError(error)
+    && error.response?.status === 401
+    && !error.config?.url?.startsWith('/auth/login')
+  ) {
+    clearAuth();
+    window.location.href = '/login';
+  }
+  return Promise.reject(error);
 });
 
 export default client;
