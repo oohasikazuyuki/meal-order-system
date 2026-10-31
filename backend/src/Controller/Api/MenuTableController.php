@@ -1255,7 +1255,10 @@ class MenuTableController extends AppController
             FROM menus m
             JOIN menu_masters mm
               ON mm.name = m.name
-             AND (mm.block_id = m.block_id OR mm.block_id IS NULL)
+             -- 同じ名前のブロック専用マスタがあれば共通マスタは使わない（両方足すと倍になる）
+             AND (mm.block_id = m.block_id
+                  OR (mm.block_id IS NULL AND NOT EXISTS (
+                      SELECT 1 FROM menu_masters mm2 WHERE mm2.name = m.name AND mm2.block_id = m.block_id)))
             JOIN menu_ingredients mi
               ON mi.menu_master_id = mm.id
              AND mi.name != ''
