@@ -15,6 +15,7 @@ class User extends Entity
         'role'      => true,
         'block_id'  => true,
         'api_token' => true,
+        'api_token_expires_at' => true,
     ];
 
     protected array $_hidden = ['password', 'kamaho_password_enc'];

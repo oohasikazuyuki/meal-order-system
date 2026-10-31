@@ -19,6 +19,10 @@ import {
 
 const ROLE_LABELS = { admin: '管理者', user: '一般' }
 
+/** 「管理者がいなくなる」「ID重複」などはサーバーの文言をそのまま見せる */
+const getApiErrorMessage = (err: unknown, fallback: string): string =>
+  (isAxiosError(err) && err.response?.data?.message) || fallback
+
 export default function UsersPage() {
   const [users, setUsers] = useState<UserRecord[]>([])
   const [loading, setLoading] = useState(false)
@@ -67,9 +71,9 @@ export default function UsersPage() {
     try {
       await deleteUser(user.id)
       setSuccessMsg(`「${user.name}」を削除しました`)
-    } catch {
+    } catch (err) {
       setUsers(prevUsers)
-      setError('削除できませんでした。もう一度お試しください。')
+      setError(getApiErrorMessage(err, '削除できませんでした。もう一度お試しください。'))
     }
   }
 
@@ -332,7 +336,7 @@ function UserForm({
         })
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '保存できませんでした。もう一度お試しください。')
+      setError(getApiErrorMessage(err, '保存できませんでした。もう一度お試しください。'))
     } finally {
       setSaving(false)
     }

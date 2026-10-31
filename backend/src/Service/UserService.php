@@ -220,6 +220,14 @@ class UserService
             ];
         }
 
+        if (isset($data['role']) && $data['role'] !== 'admin' && $this->isLastAdmin($user)) {
+            return [
+                'success' => false,
+                'status' => 409,
+                'message' => '管理者が1人もいなくなるため、権限を変更できません'
+            ];
+        }
+
         // block_id: 空文字またはnullの場合はnullに統一
         if (array_key_exists('block_id', $data)) {
             $data['block_id'] = ($data['block_id'] !== '' && $data['block_id'] !== null && $data['block_id'] !== 0) 
@@ -285,9 +293,26 @@ class UserService
     /**
      * ユーザー削除
      */
-    public function deleteUser(int $id): bool
+    public function deleteUser(int $id): array
     {
-        $user = $this->userRepository->get($id);
-        return $this->userRepository->delete($user);
+        $user = $this->userRepository->findById($id);
+        if (!$user) {
+            return ['success' => false, 'status' => 404, 'message' => 'ユーザーが見つかりません'];
+        }
+        if ($this->isLastAdmin($user)) {
+            return ['success' => false, 'status' => 409, 'message' => '管理者が1人もいなくなるため、削除できません'];
+        }
+        $this->userRepository->delete($user);
+
+        return ['success' => true];
+    }
+
+    /**
+     * 管理者がいなくなると利用者管理を誰も開けなくなり、DBを直接触るしかなくなる
+     * ponytail: 同時に2人の管理者を降格すると両方通りうる。管理者が増えたら行ロックを検討
+     */
+    private function isLastAdmin($user): bool
+    {
+        return $user->role === 'admin' && $this->userRepository->countAdmins() <= 1;
     }
 }

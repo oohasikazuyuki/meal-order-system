@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { getStoredUser, clearAuth, isLoggedIn } from '../_lib/auth'
 import { logout, type AuthUser } from '../_lib/api/client'
 
-type NavItem = { href: string; label: string }
+type NavItem = { href: string; label: string; adminOnly?: boolean }
 
 const navGroups: { group: string; items: NavItem[] }[] = [
   {
@@ -30,7 +30,7 @@ const navGroups: { group: string; items: NavItem[] }[] = [
     items: [
       { href: '/menu-master', label: 'メニューと材料' },
       { href: '/master', label: '部屋・ブロック・仕入先' },
-      { href: '/users', label: '利用者' },
+      { href: '/users', label: '利用者', adminOnly: true },
     ],
   },
 ]
@@ -128,7 +128,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               >
                 {group}
               </p>
-              {items.map(({ href, label }) => (
+              {items.filter((i) => !i.adminOnly || user?.role === 'admin').map(({ href, label }) => (
                 <Link
                   key={href}
                   href={href}

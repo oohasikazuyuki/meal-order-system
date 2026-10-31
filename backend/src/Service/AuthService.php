@@ -2,9 +2,13 @@
 namespace App\Service;
 
 use App\Repository\UserRepository;
+use Cake\I18n\DateTime;
 
 class AuthService
 {
+    /** ログインの有効日数。過ぎたらログインし直してもらう */
+    private const TOKEN_TTL_DAYS = 30;
+
     private UserRepository $userRepository;
 
     public function __construct()
@@ -38,6 +42,7 @@ class AuthService
         // トークン生成・保存
         $token = bin2hex(random_bytes(32));
         $user->api_token = $token;
+        $user->api_token_expires_at = DateTime::now()->addDays(self::TOKEN_TTL_DAYS);
         $this->userRepository->save($user);
 
         return [
@@ -75,6 +80,7 @@ class AuthService
         $user = $this->userRepository->findByApiToken($token);
         if ($user) {
             $user->api_token = null;
+            $user->api_token_expires_at = null;
             return $this->userRepository->save($user);
         }
 
@@ -96,7 +102,8 @@ class AuthService
 
         $user = $this->userRepository->findByApiToken($token);
 
-        if (!$user) {
+        // 期限が空のトークンは期限導入前のもの。無効として扱う
+        if (!$user || $user->api_token_expires_at === null || $user->api_token_expires_at->isPast()) {
             return [
                 'success' => false,
                 'status' => 401,

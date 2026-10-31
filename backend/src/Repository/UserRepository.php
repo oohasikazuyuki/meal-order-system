@@ -30,6 +30,11 @@ class UserRepository
         return $this->Users->find()->where(['id' => $id])->first();
     }
 
+    public function countAdmins(): int
+    {
+        return $this->Users->find()->where(['role' => 'admin'])->count();
+    }
+
     public function findAll(array $options = []): array
     {
         $query = $this->Users->find();
