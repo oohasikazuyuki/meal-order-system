@@ -102,8 +102,6 @@ export const login = (login_id: string, password: string) =>
   client.post<{ ok: boolean; token: string; user: AuthUser }>('/auth/login', { login_id, password });
 export const logout = () => client.post('/auth/logout');
 export const getMe = () => client.get<{ ok: boolean; user: AuthUser }>('/auth/me');
-export const loginKamahoIntegration = (account: string, password: string) =>
-  client.post<KamahoIntegrationLoginResponse>('/rooms/kamaho-login', { account, password });
 export const getKamahoLink = () => client.get<KamahoLinkResponse>('/auth/kamaho-link');
 export const updateKamahoLink = (data: { kamaho_login_id: string; kamaho_password?: string }) =>
   withCacheClear(client.put<KamahoLinkResponse>('/auth/kamaho-link', data));
@@ -267,6 +265,14 @@ export const fetchBlockOrderQuantities = (date: string) =>
   client.get<BlockOrderQuantitiesResponse>(`/block-order-quantities?date=${date}`);
 export const saveBlockOrderQuantities = (data: SaveBlockOrderQuantitiesInput) =>
   withCacheClear(client.post('/block-order-quantities', data));
+/** 期間の食数を食数管理システムから取り込み、部屋別の食数と発注数を上書きする */
+export const importKamahoMealCounts = (from: string, to: string) =>
+  withCacheClear(
+    client.post<{ ok: boolean; saved: number; added_rooms: string[]; unassigned_rooms: string[] }>(
+      '/block-order-quantities/import-kamaho',
+      { from, to }
+    )
+  );
 
 // --- Types ---
 export interface AuthUser {
@@ -470,13 +476,6 @@ export interface KamahoMealCountsResponse {
   counts: Record<string, number>;
 }
 
-export interface KamahoIntegrationLoginResponse {
-  ok: boolean;
-  message: string;
-  room_count: number;
-  kamaho_login_id?: string | null;
-}
-
 export interface KamahoLinkResponse {
   ok: boolean;
   kamaho_login_id: string | null;
@@ -550,6 +549,8 @@ export interface BlockOrderQuantitiesResponse {
   ok: boolean;
   date: string;
   blocks: BlockWithQuantities[];
+  /** 食数管理システムから食数を取れなかった（未保存の枠は0のまま） */
+  kamaho_error?: boolean;
 }
 
 export interface SaveBlockOrderQuantitiesInput {

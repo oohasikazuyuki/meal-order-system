@@ -47,5 +47,4 @@ src/Application.php への追加内容
 ====================================================================
 
       KAMAHO_BASE_URL: https://kamaho-shokusu.jp
-      KAMAHO_LOGIN_ACCOUNT: "your-account"   # 実際のアカウントに変更
-      KAMAHO_LOGIN_PASSWORD: "your-password" # 実際のパスワードに変更
+      KAMAHO_API_TOKEN: "your-token"         # kamaho の MEAL_COUNTS_API_TOKEN と同じ値

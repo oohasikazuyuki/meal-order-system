@@ -17,9 +17,6 @@ import {
   deleteSupplierTemplate,
   downloadSupplierTemplate,
   fetchKamahoMealCounts,
-  loginKamahoIntegration,
-  getKamahoLink,
-  updateKamahoLink,
   type Room,
   type Block,
   type Supplier,
@@ -88,9 +85,6 @@ function RoomsTab() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
   const [mealCounts, setMealCounts] = useState<Record<string, number>>({})
   const [loadingMealCounts, setLoadingMealCounts] = useState(false)
-  const [kamahoAccount, setKamahoAccount] = useState('')
-  const [kamahoPassword, setKamahoPassword] = useState('')
-  const [kamahoLoggingIn, setKamahoLoggingIn] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Room | null>(null)
 
   const loadRooms = useCallback(async () => {
@@ -126,39 +120,6 @@ function RoomsTab() {
     loadMealCounts()
   }, [loadMealCounts])
 
-  useEffect(() => {
-    getKamahoLink()
-      .then((res) => setKamahoAccount(res.data.kamaho_login_id ?? ''))
-      .catch(() => {})
-  }, [])
-
-  const handleKamahoLogin = async () => {
-    const account = kamahoAccount.trim()
-    if (!account || !kamahoPassword) {
-      setError('連携ログインIDとパスワードの両方を入力してください。')
-      return
-    }
-    setKamahoLoggingIn(true)
-    setError(null)
-    setSuccessMsg(null)
-    try {
-      const res = await loginKamahoIntegration(account, kamahoPassword)
-      setSuccessMsg(`${res.data.message}（部屋 ${res.data.room_count} 件）`)
-      loadMealCounts()
-    } catch (e) {
-      setError(getApiErrorMessage(e, '食数管理システムにログインできませんでした。IDとパスワードを確認してください。'))
-    } finally {
-      setKamahoLoggingIn(false)
-    }
-  }
-
-  const handleKamahoCredentialClear = () => {
-    updateKamahoLink({ kamaho_login_id: '' }).catch(() => {})
-    setKamahoAccount('')
-    setKamahoPassword('')
-    setSuccessMsg('連携ログイン情報を消しました')
-  }
-
   const handleSync = async () => {
     setSyncing(true)
     setError(null)
@@ -175,7 +136,7 @@ function RoomsTab() {
       )
       loadMealCounts()
     } catch (e) {
-      setError(getApiErrorMessage(e, '食数管理システムと同期できませんでした。連携ログインを確認してください。'))
+      setError(getApiErrorMessage(e, '食数管理システムと同期できませんでした。'))
     } finally {
       setSyncing(false)
     }
@@ -234,42 +195,9 @@ function RoomsTab() {
           </div>
         </div>
         <div className="sheet__body">
-          <div className="grid2">
-            <label className="field">
-              <span>連携ログインID</span>
-              <input
-                className="input"
-                type="text"
-                value={kamahoAccount}
-                onChange={(e) => setKamahoAccount(e.target.value)}
-                autoComplete="username"
-              />
-            </label>
-            <label className="field">
-              <span>連携パスワード</span>
-              <input
-                className="input"
-                type="password"
-                value={kamahoPassword}
-                onChange={(e) => setKamahoPassword(e.target.value)}
-                autoComplete="current-password"
-              />
-            </label>
-          </div>
           <div className="btnrow">
-            <button
-              type="button"
-              className="btn btn--primary"
-              onClick={handleKamahoLogin}
-              disabled={kamahoLoggingIn}
-            >
-              {kamahoLoggingIn ? 'つないでいます' : '連携ログイン'}
-            </button>
-            <button type="button" className="btn" onClick={handleKamahoCredentialClear}>
-              連携情報を消す
-            </button>
             <span className="muted" style={{ fontSize: 'var(--fs-sm)' }}>
-              ログインすると、向こうに登録されている部屋名を取り込めます。
+              食数管理システムに登録されている部屋を取り込みます。部屋名が変わっても同じ部屋として扱います。
             </span>
           </div>
           {kamahoRooms.length > 0 && (

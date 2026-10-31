@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import {
   fetchBlockOrderQuantities,
   saveBlockOrderQuantities,
+  importKamahoMealCounts,
   fetchSuppliers,
   fetchOrderSheetPdf,
   MEAL_TYPE_LABELS,
@@ -39,7 +40,10 @@ export default function DailyOrderForm() {
   const [weekData, setWeekData] = useState<WeekData>({})
   const [weekEditState, setWeekEditState] = useState<WeekEditState>({})
   const [loading, setLoading] = useState(false)
-  const [saving, setSaving] = useState<string | null>(null) // dateStr または 'all'
+  const [saving, setSaving] = useState<string | null>(null) // dateStr / 'all' / 'import'
+  // 食数管理システムから取れなかった日（未保存の枠は0のまま出ている）
+  const [kamahoErrorDates, setKamahoErrorDates] = useState<string[]>([])
+  const [confirmImport, setConfirmImport] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
@@ -73,9 +77,11 @@ export default function DailyOrderForm() {
     // 週を切り替えたら前の週の値は捨てる（未取得と空を取り違えないため）
     setWeekData({})
     setWeekEditState({})
+    setKamahoErrorDates([])
 
-    const apply = (ds: string, blocks: BlockWithQuantities[]) => {
+    const apply = (ds: string, blocks: BlockWithQuantities[], kamahoError?: boolean) => {
       setWeekData((prev) => ({ ...prev, [ds]: blocks }))
+      if (kamahoError) setKamahoErrorDates((prev) => [...prev, ds])
       const state: DayEditState = {}
       for (const block of blocks) {
         state[block.id] = {}
@@ -96,7 +102,7 @@ export default function DailyOrderForm() {
     const firstIdx = Math.min(Math.max(activeDayRef.current, 0), 6)
     try {
       const first = await fetchBlockOrderQuantities(dates[firstIdx])
-      apply(dates[firstIdx], first.data.blocks)
+      apply(dates[firstIdx], first.data.blocks, first.data.kamaho_error)
     } catch {
       setLoadError('この週の食数を読み込めませんでした。通信を確認してください。')
       setLoading(false)
@@ -107,7 +113,7 @@ export default function DailyOrderForm() {
     const rest = dates.filter((_, i) => i !== firstIdx)
     const results = await Promise.allSettled(rest.map((d) => fetchBlockOrderQuantities(d)))
     results.forEach((r, i) => {
-      if (r.status === 'fulfilled') apply(rest[i], r.value.data.blocks)
+      if (r.status === 'fulfilled') apply(rest[i], r.value.data.blocks, r.value.data.kamaho_error)
     })
   }, [])
 
@@ -203,6 +209,33 @@ export default function DailyOrderForm() {
     }
   }
 
+  const handleImport = async () => {
+    setConfirmImport(false)
+    setSaving('import')
+    setError(null)
+    setSuccessMsg(null)
+    try {
+      const res = await importKamahoMealCounts(weekDates[0], weekDates[6])
+      await loadWeek(weekStart)
+      const { added_rooms, unassigned_rooms } = res.data
+      setSuccessMsg(
+        [
+          'この週の食数を食数管理システムから取り込みました',
+          added_rooms.length > 0 && `部屋を追加しました：${added_rooms.join('、')}`,
+          unassigned_rooms.length > 0 &&
+            `ブロックに入っていないため発注に含まれない部屋があります：${unassigned_rooms.join('、')}`,
+        ]
+          .filter(Boolean)
+          .join('。')
+      )
+    } catch (e) {
+      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+      setError(msg ? `取り込めませんでした：${msg}` : '取り込めませんでした。もう一度お試しください。')
+    } finally {
+      setSaving(null)
+    }
+  }
+
   // 取得した値と、いま画面に入っている値がずれていれば未保存とみなす。
   // 週を切り替えると weekEditState を捨てて取り直すので、
   // 保護しないと打ち込んだ数字が無言で消える。
@@ -254,6 +287,17 @@ export default function DailyOrderForm() {
 
   return (
     <div>
+      {confirmImport && (
+        <ConfirmDialog
+          title="食数管理システムから取り込みます"
+          message={`${formatShort(weekDates[0])}〜${formatShort(weekDates[6])} の部屋別の食数と発注数を、食数管理システムの予約食数で上書きします。手で調整した発注数は元に戻ります（備考は残ります）。${hasUnsaved ? '保存していない入力も失われます。' : ''}`}
+          confirmLabel="上書きして取り込む"
+          destructive
+          onConfirm={handleImport}
+          onCancel={() => setConfirmImport(false)}
+        />
+      )}
+
       {pendingNav && (
         <ConfirmDialog
           title="入力した食数がまだ保存されていません"
@@ -286,6 +330,14 @@ export default function DailyOrderForm() {
                 未保存 {dirtyDates.length}日
               </span>
             )}
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setConfirmImport(true)}
+              disabled={saving !== null || loading}
+            >
+              {saving === 'import' ? '取り込んでいます' : '食数管理システムから取り込む'}
+            </button>
             <button
               type="button"
               className="btn btn--primary"
@@ -337,6 +389,14 @@ export default function DailyOrderForm() {
       )}
 
       {(error ?? pdfError) && <ErrorNotice message={(error ?? pdfError)!} />}
+
+      {kamahoErrorDates.length > 0 && (
+        <p className="notice notice--error" role="status">
+          食数管理システムから食数を取れなかった日があります（
+          {[...kamahoErrorDates].sort().map(formatShort).join('、')}
+          ）。保存していない枠は0のままです。時間をおいて「食数管理システムから取り込む」を押してください。
+        </p>
+      )}
 
       {pdfDoc && (
         <PdfViewerModal
