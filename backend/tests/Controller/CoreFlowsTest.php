@@ -143,6 +143,33 @@ class CoreFlowsTest extends TestCase
         $this->assertSame([['たまねぎ', 2750.0, 55], ['ルウ', 3.0, 55], ['豚肉', 4400.0, 55]], $got);
     }
 
+    /**
+     * ブロック専用と全ブロック共通に同じ名前のメニューマスタがあると、
+     * 両方の材料が足されて発注数が倍になる。
+     */
+    public function testOrderSheetDoesNotDoubleCountWhenBlockAndSharedMasterHaveSameName(): void
+    {
+        $monday = $this->futureMonday();
+        $supplierId = $this->insert('suppliers', ['name' => 'テスト業者', 'code' => 'T', 'delivery_days' => '0']);
+        $blockId = $this->insert('blocks', ['name' => 'Aブロック']);
+        foreach ([null, $blockId] as $masterBlock) {
+            $mm = $this->insert('menu_masters', ['name' => 'カレー', 'block_id' => $masterBlock]);
+            $this->insert('menu_ingredients', [
+                'menu_master_id' => $mm, 'name' => 'たまねぎ', 'amount' => 50, 'unit' => 'g', 'supplier_id' => $supplierId,
+            ]);
+        }
+        $this->insert('menus', ['name' => 'カレー', 'menu_date' => $monday, 'date' => $monday, 'meal_type' => 3, 'block_id' => $blockId]);
+        $this->insert('block_order_quantities', [
+            'order_date' => $monday, 'block_id' => $blockId, 'meal_type' => 3, 'order_quantity' => 10,
+        ]);
+
+        $this->apiGet('/api/order-sheets/calculate.json?week_start=' . $monday);
+        $body = json_decode((string)$this->_response->getBody(), true);
+        $mine = array_values(array_filter($body['suppliers'], fn($s) => $s['supplier_id'] === $supplierId));
+
+        $this->assertSame([['name' => 'たまねぎ', 'amount' => 500.0, 'unit' => 'g']], $this->numify($mine[0]['days'][$monday]));
+    }
+
     // ── helpers ────────────────────────────────────────────────
 
     /** 2ブロックが同じ日の夕食にカレーを出す。返り値は仕入先ID */
