@@ -170,6 +170,35 @@ class CoreFlowsTest extends TestCase
         $this->assertSame([['name' => 'たまねぎ', 'amount' => 500.0, 'unit' => 'g']], $this->numify($mine[0]['days'][$monday]));
     }
 
+    /** 在庫一覧と「未確認のメニュー」も、ブロック専用マスタがあれば共通マスタを使わない */
+    public function testInventoryAndUnreviewedUseBlockMasterOverShared(): void
+    {
+        $monday = $this->futureMonday();
+        $invId = $this->insert('suppliers', ['name' => '在庫', 'code' => 'Z', 'delivery_days' => '0']);
+        $blockId = $this->insert('blocks', ['name' => 'Aブロック']);
+        $masters = [];
+        foreach ([null, $blockId] as $masterBlock) {
+            $masters[] = $mm = $this->insert('menu_masters', ['name' => 'カレー', 'block_id' => $masterBlock, 'needs_review' => 1]);
+            $this->insert('menu_ingredients', [
+                'menu_master_id' => $mm, 'name' => '米', 'amount' => 80, 'unit' => 'g', 'supplier_id' => $invId,
+            ]);
+        }
+        $this->insert('menus', ['name' => 'カレー', 'menu_date' => $monday, 'date' => $monday, 'meal_type' => 3, 'block_id' => $blockId]);
+        $this->insert('block_order_quantities', [
+            'order_date' => $monday, 'block_id' => $blockId, 'meal_type' => 3, 'order_quantity' => 10,
+        ]);
+
+        $this->apiGet('/api/order-sheets/inventory.json?week_start=' . $monday);
+        $this->assertResponseOk();
+        $days = json_decode((string)$this->_response->getBody(), true)['days'];
+        $this->assertSame([['name' => '米', 'amount' => 800.0, 'unit' => 'g']], $this->numify($days[$monday]));
+
+        $this->apiGet('/api/order-sheets/calculate.json?week_start=' . $monday);
+        $this->assertResponseOk();
+        $unreviewed = json_decode((string)$this->_response->getBody(), true)['unreviewed'];
+        $this->assertSame([['id' => $masters[1], 'name' => 'カレー', 'dates' => 1]], $unreviewed);
+    }
+
     // ── helpers ────────────────────────────────────────────────
 
     /** 2ブロックが同じ日の夕食にカレーを出す。返り値は仕入先ID */

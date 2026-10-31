@@ -7,6 +7,9 @@ use App\Controller\AppController;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use DateTime;
 use DateTimeZone;
+use Cake\Database\Expression\IdentifierExpression;
+use Cake\Database\Expression\QueryExpression;
+use Cake\Database\Expression\UnaryExpression;
 
 /**
  * 発注書 Excel 生成 API
@@ -106,20 +109,22 @@ class OrderSheetsController extends AppController
      */
     private function findUnreviewedMasters(DateTime $from, DateTime $to): array
     {
-        $rows = $this->Menus->getConnection()->execute("
-            SELECT mm.id, mm.name, COUNT(DISTINCT m.menu_date) AS dates
-            FROM menus m
-            JOIN menu_masters mm
-              ON mm.name = m.name
-             -- 同じ名前のブロック専用マスタがあれば共通マスタは使わない（両方足すと倍になる）
-             AND (mm.block_id = m.block_id
-                  OR (mm.block_id IS NULL AND NOT EXISTS (
-                      SELECT 1 FROM menu_masters mm2 WHERE mm2.name = m.name AND mm2.block_id = m.block_id)))
-            WHERE m.menu_date BETWEEN :from AND :to
-              AND mm.needs_review = 1
-            GROUP BY mm.id, mm.name
-            ORDER BY dates DESC, mm.name
-        ", ['from' => $from->format('Y-m-d'), 'to' => $to->format('Y-m-d')])->fetchAll('assoc');
+        $query = $this->Menus->find('withMaster');
+        $distinctDates = new UnaryExpression('DISTINCT', new IdentifierExpression('Menus.menu_date'), UnaryExpression::PREFIX);
+        $rows = $query
+            ->select([
+                'id'    => 'mm.id',
+                'name'  => 'mm.name',
+                'dates' => $query->func()->count($distinctDates),
+            ])
+            ->where(fn(QueryExpression $exp) => $exp
+                ->between('Menus.menu_date', $from->format('Y-m-d'), $to->format('Y-m-d'))
+                ->eq('mm.needs_review', 1, 'integer'))
+            ->groupBy(['mm.id', 'mm.name'])
+            ->orderBy(['dates' => 'DESC', 'mm.name' => 'ASC'])
+            ->disableHydration()
+            ->disableResultsCasting()
+            ->toArray();
 
         return array_map(fn($r) => [
             'id'    => (int)$r['id'],
@@ -158,43 +163,29 @@ class OrderSheetsController extends AppController
         [, , $userBlockId] = $this->getUserContext();
 
         // 2週分の全日付について在庫食材を集計（menu_date単位）
-        $conn = $this->Menus->getConnection();
-        $blockFilterSql = $userBlockId !== null ? ' AND m.block_id = :block_id' : '';
-        $params = [
-            'supplier_id' => $invSupplier->id,
-            'start'       => $weekStart->format('Y-m-d'),
-            'end'         => $weekEnd->format('Y-m-d'),
-        ];
+        $query = $this->Menus->find('withMaster')->find('withOrderQuantity');
+        $query
+            ->select([
+                'menu_date'       => 'Menus.menu_date',
+                'ingredient_name' => 'mi.name',
+                'unit'            => 'mi.unit',
+                'total_amount'    => $query->func()->sum($this->Menus->ingredientAmount($query)),
+            ])
+            ->innerJoin(['mi' => 'menu_ingredients'], fn(QueryExpression $exp) => $exp
+                ->equalFields('mi.menu_master_id', 'mm.id')
+                ->eq('mi.supplier_id', $invSupplier->id, 'integer')
+                ->notEq('mi.name', '', 'string'))
+            ->where(fn(QueryExpression $exp) => $exp
+                ->between('Menus.menu_date', $weekStart->format('Y-m-d'), $weekEnd->format('Y-m-d')))
+            ->groupBy(['Menus.menu_date', 'mi.name', 'mi.unit'])
+            ->having(fn(QueryExpression $exp) => $exp->gt('total_amount', 0, 'integer'))
+            ->orderBy(['Menus.menu_date' => 'ASC', 'mi.name' => 'ASC'])
+            ->disableHydration()
+            ->disableResultsCasting();
         if ($userBlockId !== null) {
-            $params['block_id'] = $userBlockId;
+            $query->where(['Menus.block_id' => $userBlockId]);
         }
-        $rows = $conn->execute("
-            SELECT
-                m.menu_date,
-                mi.name   AS ingredient_name,
-                mi.unit,
-                SUM(mi.amount * COALESCE(boq.order_quantity, 0)) AS total_amount
-            FROM menus m
-            JOIN menu_masters mm
-              ON mm.name = m.name
-             -- 同じ名前のブロック専用マスタがあれば共通マスタは使わない（両方足すと倍になる）
-             AND (mm.block_id = m.block_id
-                  OR (mm.block_id IS NULL AND NOT EXISTS (
-                      SELECT 1 FROM menu_masters mm2 WHERE mm2.name = m.name AND mm2.block_id = m.block_id)))
-            JOIN menu_ingredients mi
-              ON mi.menu_master_id = mm.id
-             AND mi.supplier_id    = :supplier_id
-             AND mi.name          != ''
-            LEFT JOIN block_order_quantities boq
-              ON boq.order_date = m.menu_date
-             AND boq.block_id   = m.block_id
-             AND boq.meal_type  = m.meal_type
-            WHERE m.menu_date BETWEEN :start AND :end
-              {$blockFilterSql}
-            GROUP BY m.menu_date, mi.name, mi.unit
-            HAVING total_amount > 0
-            ORDER BY m.menu_date, mi.name
-        ", $params)->fetchAll('assoc');
+        $rows = $query->toArray();
 
         // 日付ごとに整理
         foreach ($rows as $r) {
@@ -453,53 +444,38 @@ class OrderSheetsController extends AppController
             return [];
         }
 
-        $datePlaceholders = [];
-        $params = ['supplier_id' => $supplierId];
-        foreach (array_values($dates) as $i => $date) {
-            $key = "d{$i}";
-            $datePlaceholders[] = ':' . $key;
-            $params[$key] = $date;
-        }
-
-        $conn = $this->Menus->getConnection();
-        $blockFilterSql = $blockId !== null ? ' AND m.block_id = :block_id' : '';
+        $query = $this->Menus->find('withMaster')->find('withOrderQuantity');
+        $func = $query->func();
+        $ppu = new IdentifierExpression('mi.persons_per_unit');
+        // 「N人で1単位」の材料は合計人数から切り上げ、それ以外は 1人あたり量 × 人数
+        $totalAmount = $query->expr()->case()
+            ->when($query->expr()->isNotNull('mi.persons_per_unit')->gt('mi.persons_per_unit', 0, 'integer'))
+            ->then($func->CEIL([
+                $query->expr()->add([$func->sum($this->Menus->orderQuantity($query)), $ppu])->setConjunction('/'),
+            ]))
+            ->else($func->sum($this->Menus->ingredientAmount($query)));
+        $query
+            ->select([
+                'menu_date'        => 'Menus.menu_date',
+                'ingredient_name'  => 'mi.name',
+                'unit'             => 'mi.unit',
+                'persons_per_unit' => 'mi.persons_per_unit',
+                'total_amount'     => $totalAmount,
+            ])
+            ->innerJoin(['mi' => 'menu_ingredients'], fn(QueryExpression $exp) => $exp
+                ->equalFields('mi.menu_master_id', 'mm.id')
+                ->eq('mi.supplier_id', $supplierId, 'integer')
+                ->notEq('mi.name', '', 'string'))
+            ->where(fn(QueryExpression $exp) => $exp->in('Menus.menu_date', array_values($dates), 'string'))
+            ->groupBy(['Menus.menu_date', 'mi.name', 'mi.unit', 'mi.persons_per_unit'])
+            ->having(fn(QueryExpression $exp) => $exp->gt('total_amount', 0, 'integer'))
+            ->orderBy(['Menus.menu_date' => 'ASC', 'mi.name' => 'ASC'])
+            ->disableHydration()
+            ->disableResultsCasting();
         if ($blockId !== null) {
-            $params['block_id'] = $blockId;
+            $query->where(['Menus.block_id' => $blockId]);
         }
-
-        $inClause = implode(',', $datePlaceholders);
-        $rows = $conn->execute("
-            SELECT
-                m.menu_date,
-                mi.name  AS ingredient_name,
-                mi.unit,
-                mi.persons_per_unit,
-                CASE
-                    WHEN mi.persons_per_unit IS NOT NULL AND mi.persons_per_unit > 0
-                    THEN CEIL(SUM(COALESCE(boq.order_quantity, 0)) / mi.persons_per_unit)
-                    ELSE SUM(mi.amount * COALESCE(boq.order_quantity, 0))
-                END AS total_amount
-            FROM menus m
-            JOIN menu_masters mm
-              ON mm.name = m.name
-             -- 同じ名前のブロック専用マスタがあれば共通マスタは使わない（両方足すと倍になる）
-             AND (mm.block_id = m.block_id
-                  OR (mm.block_id IS NULL AND NOT EXISTS (
-                      SELECT 1 FROM menu_masters mm2 WHERE mm2.name = m.name AND mm2.block_id = m.block_id)))
-            JOIN menu_ingredients mi
-              ON mi.menu_master_id = mm.id
-             AND mi.supplier_id    = :supplier_id
-             AND mi.name          != ''
-            LEFT JOIN block_order_quantities boq
-             ON boq.order_date = m.menu_date
-             AND boq.block_id   = m.block_id
-             AND boq.meal_type  = m.meal_type
-            WHERE m.menu_date IN ({$inClause})
-              {$blockFilterSql}
-            GROUP BY m.menu_date, mi.name, mi.unit, mi.persons_per_unit
-            HAVING total_amount > 0
-            ORDER BY m.menu_date, mi.name
-        ", $params)->fetchAll('assoc');
+        $rows = $query->toArray();
 
         $result = [];
         foreach ($dates as $date) {
